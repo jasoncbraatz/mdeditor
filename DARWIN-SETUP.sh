@@ -42,6 +42,26 @@ fi
 XCODE_PATH=$(xcode-select --print-path)
 echo -e "${GREEN}✓${NC} Xcode toolchain: $XCODE_PATH"
 
+# Verify FULL Xcode.app — CocoaPods + xcodebuild need it (CLT alone is not enough).
+XCODE_APP=""
+for candidate in /Applications/Xcode.app /Applications/Xcode-beta.app; do
+    [ -d "$candidate" ] && XCODE_APP="$candidate" && break
+done
+if [ -z "$XCODE_APP" ]; then
+    echo -e "${YELLOW}!${NC} Full Xcode.app NOT installed (only CLT detected)."
+    echo "    Required for macdown-build/test. Install via Mac App Store, then run:"
+    echo "      sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer"
+    echo "      sudo xcodebuild -license accept"
+    echo "      sudo xcodebuild -runFirstLaunch"
+    echo "    Re-source this script after install."
+else
+    echo -e "${GREEN}✓${NC} Xcode.app: $XCODE_APP"
+    if [ "$XCODE_PATH" != "$XCODE_APP/Contents/Developer" ]; then
+        echo -e "${YELLOW}!${NC} xcode-select points at CLT, not Xcode.app. Switch with:"
+        echo "      sudo xcode-select --switch $XCODE_APP/Contents/Developer"
+    fi
+fi
+
 # ============================================================================
 # 3. BUILD OUTPUT PATHS
 # ============================================================================

@@ -91,7 +91,9 @@
 		905EF1B7196164F300FC3CE9 /* macdown in Copy Command Line Utility */ = {isa = PBXBuildFile; fileRef = 905EF1A7196164CA00FC3CE9 /* macdown */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		B5C5C1666A506FEA86435D25 /* libPods-macdown-cmd.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 263367245B2D78A42C2F19D7 /* libPods-macdown-cmd.a */; };
 		EBFE3157737058F5A63699C8 /* libPods-MacDownTests.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 3C949FDE45493AE77DAD9BF4 /* libPods-MacDownTests.a */; };
-/* End PBXBuildFile section */
+		B19F00B19F00B19F00000003 /* MPTestHarness.m in Sources */ = {isa = PBXBuildFile; fileRef = B19F00B19F00B19F00000002 /* MPTestHarness.m */; };
+		B19F00B19F00B19F00000005 /* MPTestHarnessTests.m in Sources */ = {isa = PBXBuildFile; fileRef = B19F00B19F00B19F00000004 /* MPTestHarnessTests.m */; };
+	/* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		1F4574781A2D87D500DFA5FF /* PBXContainerItemProxy */ = {
@@ -525,7 +527,10 @@
 		E77E5D72241C935100699B5A /* da-DK */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "da-DK"; path = "Localization/da-DK.lproj/MPDocument.strings"; sourceTree = "<group>"; };
 		E7D458CB241C933800411A36 /* fi */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fi; path = Localization/fi.lproj/MainMenu.strings; sourceTree = "<group>"; };
 		E7DD09F1241C9368008FBC25 /* da */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = da; path = Localization/da.lproj/MainMenu.strings; sourceTree = "<group>"; };
-/* End PBXFileReference section */
+		B19F00B19F00B19F00000001 /* MPTestHarness.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = MPTestHarness.h; sourceTree = "<group>"; };
+		B19F00B19F00B19F00000002 /* MPTestHarness.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = MPTestHarness.m; sourceTree = "<group>"; };
+		B19F00B19F00B19F00000004 /* MPTestHarnessTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = MPTestHarnessTests.m; sourceTree = "<group>"; };
+	/* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		1FA6DE1E1941CC9E000409FB /* Frameworks */ = {
@@ -814,6 +819,7 @@
 		1FCDC9EB1944F89B00B1F966 /* MacDown */ = {
 			isa = PBXGroup;
 			children = (
+				B19F00B19F00B19F00000006 /* Testing */,
 				1F0D9D62194AC7CF008E1856 /* Utility */,
 				1F0D9D5D194AC7CF008E1856 /* Extension */,
 				1F396E6319B0EA17000D3EFC /* View */,
@@ -841,6 +847,7 @@
 		1FCDCA2F1944F96E00B1F966 /* MacDownTests */ = {
 			isa = PBXGroup;
 			children = (
+				B19F00B19F00B19F00000004 /* MPTestHarnessTests.m */,
 				1FF1420319A8A24800CF8A6A /* MPUtilityTests.m */,
 				1F25E1C21A50F4F10029371D /* MPColorTests.m */,
 				1FCDCA311944F96E00B1F966 /* MPPreferencesTests.m */,
@@ -898,7 +905,17 @@
 			name = Pods;
 			sourceTree = "<group>";
 		};
-/* End PBXGroup section */
+		B19F00B19F00B19F00000006 /* Testing */ = {
+			isa = PBXGroup;
+			children = (
+				B19F00B19F00B19F00000001 /* MPTestHarness.h */,
+				B19F00B19F00B19F00000002 /* MPTestHarness.m */,
+			);
+			name = Testing;
+			path = Code/Testing;
+			sourceTree = "<group>";
+		};
+	/* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
 		1FA6DE201941CC9E000409FB /* MacDown */ = {
@@ -1225,6 +1242,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B19F00B19F00B19F00000003 /* MPTestHarness.m in Sources */,
 				1F396E6619B0EA17000D3EFC /* MPEditorView.m in Sources */,
 				1F0D9D7A194AC7F7008E1856 /* MPMarkdownPreferencesViewController.m in Sources */,
 				1F0D9D7D194AC7F7008E1856 /* MPPreferencesViewController.m in Sources */,
@@ -1268,6 +1286,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B19F00B19F00B19F00000005 /* MPTestHarnessTests.m in Sources */,
 				1FFEB31919729F7C00B2254F /* MPAssetTests.m in Sources */,
 				1F51C9A5194565050015A96F /* MPPreferencesTests.m in Sources */,
 				1FF1420419A8A24800CF8A6A /* MPUtilityTests.m in Sources */,

@@ -19,4 +19,8 @@
 @property (nonatomic, readwrite) NSString *markdown;
 @property (nonatomic, readonly) NSString *html;
 
+// Test-harness / blank-canvas recovery hook (task 1216089018004712).
+@property (readonly) BOOL isPreviewReady;
+- (void)forceRefreshPreview;
+
 @end

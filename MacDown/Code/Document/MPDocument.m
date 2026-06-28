@@ -384,6 +384,15 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
     self.renderer.dataSource = self;
     self.renderer.delegate = self;
 
+    // BUG FIX (blank-canvas, task 1216089018004712): force a clean preview-state
+    // baseline whenever a document's window finishes loading. Multi-document
+    // sessions inherit AppKit document state on idle in subtle ways; explicitly
+    // resetting these three booleans guarantees the first render: of a freshly
+    // opened doc is treated as not-ready / not-pending / not-already-rendering.
+    self.isPreviewReady = NO;
+    self.renderToWebPending = NO;
+    self.alreadyRenderingInWeb = NO;
+
     for (NSString *key in MPEditorPreferencesToObserve())
     {
         [defaults addObserver:self forKeyPath:key
@@ -870,6 +879,16 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
 
 - (void)webView:(WebView *)sender didFinishLoadForFrame:(WebFrame *)frame
 {
+    // BUG FIX (blank-canvas): defensive guards. Ignore frame-load callbacks
+    // that don't belong to OUR preview's main frame (subframes, stale WebViews
+    // from prior documents, or a WebView whose window has gone away on idle).
+    // Without these, isPreviewReady can be flipped YES by an irrelevant load,
+    // hiding the real not-ready state and producing a blank canvas.
+    if (sender != self.preview || frame != sender.mainFrame)
+        return;
+    if (!sender.window || !sender.mainFrameDocument)
+        return;
+
     // If MathJax is on, the on-completion callback will be invoked by the
     // JavaScript handler injected in -webView:didCommitLoadForFrame:.
     if (!self.preferences.htmlMathJax)
@@ -896,6 +915,10 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
 - (void)webView:(WebView *)sender didFailLoadWithError:(NSError *)error
        forFrame:(WebFrame *)frame
 {
+    // BUG FIX (blank-canvas): same guards as didFinishLoadForFrame: -- a failed
+    // load on a stale/subframe WebView must not leak into our ready-state path.
+    if (sender != self.preview || frame != sender.mainFrame)
+        return;
     [self webView:sender didFinishLoadForFrame:frame];
     
     self.alreadyRenderingInWeb = NO;
@@ -1110,6 +1133,14 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
         }
     }
 #endif
+
+    // BUG FIX (blank-canvas, task 1216089018004712): reset isPreviewReady before
+    // we kick off a new load. The previous load may have left the flag YES while
+    // the WebView's internal frame is in a transient state on document switch;
+    // truthfully tracking "not ready" until didFinishLoadForFrame: fires again
+    // prevents the same-baseURL short-circuit above from skipping a real reload
+    // and stops a stale-flag race from leaving both panes blank.
+    self.isPreviewReady = NO;
 
     // Reload the page if there's not valid tree to work with.
     [self.preview.mainFrame loadHTMLString:html baseURL:baseUrl];
@@ -1486,6 +1517,27 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
 - (IBAction)render:(id)sender
 {
     [self.renderer parseAndRenderLater];
+}
+
+// BUG FIX (blank-canvas, task 1216089018004712): explicit recovery for the
+// "two-panel blank canvas" idle bug. Test harness + future menu/keyboard
+// bindings call this to force a full preview reload from a known-empty page,
+// bypassing the same-baseURL DOM-replace short-circuit and any stale
+// isPreviewReady state. Reversible: pure setter + two loadHTMLString calls.
+- (void)forceRefreshPreview
+{
+    if (!self.preview || !self.preview.window)
+        return;
+    self.isPreviewReady = NO;
+    self.alreadyRenderingInWeb = NO;
+    self.renderToWebPending = NO;
+    self.currentBaseUrl = nil;
+    [self.preview.mainFrame loadHTMLString:@"<html><body></body></html>"
+                                   baseURL:nil];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [self.renderer parseAndRenderNow];
+    });
 }
 
 

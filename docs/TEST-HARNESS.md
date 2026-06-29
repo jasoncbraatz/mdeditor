@@ -112,12 +112,19 @@ NSString *previewText = [MPTestHarness previewText];     // rendered DOM innerTe
 | `+selectedText` | `NSString *` | Currently selected text (`@""` if none). |
 | `+selectSubstring:` | `BOOL` | Select first occurrence of a string; NO if not found. |
 
-### 3.4 Command registry (NEW — every toolbar/menu editing action)
-| Call | Returns | Notes |
+### 3.4 Command registry (every toolbar/menu editing action)
+> **Phase 1 (2026-06-29): the registry moved into the app target.** It now lives on `MPDocument`
+> (`+[MPDocument availableCommandIDs]`, `-[MPDocument invokeCommandID:sender:error:]`, backed by a
+> private `mp_commandRegistry` of id→work blocks). **All 32 editing IBActions are one-line
+> delegations into it**, so the menu, the toolbar (`sendAction:`), and the harness/MCP all run the
+> SAME code — "the GUI only confirms what the harness proves" is now literal, not aspirational. The
+> `MPTestHarness` calls below are a thin façade over the document's registry. (The old test-only
+> `+commandSelectorMap` was removed — the selector mapping no longer exists; commands are blocks.)
+
+| Call (harness façade) | Returns | Notes |
 |---|---|---|
-| `+availableCommands` | `NSArray<NSString*>*` | All stable command ids, sorted. |
-| `+commandSelectorMap` | `NSDictionary*` | id → `MPDocument` selector (e.g. `@"strong"` → `"toggleStrong:"`). |
-| `+invokeCommand:error:` | `BOOL` | Invoke a command by id against the current doc, exactly as the toolbar/menu would. NO + error for unknown id / no document. |
+| `+availableCommands` | `NSArray<NSString*>*` | All stable command ids, sorted. Forwards to `+[MPDocument availableCommandIDs]`. |
+| `+invokeCommand:error:` | `BOOL` | Invoke a command by id against the current doc, exactly as the toolbar/menu would (same registry). NO + error for unknown id / no document. Forwards to `-[MPDocument invokeCommandID:sender:error:]` (sender = nil), then settles the runloop. |
 
 **Command ids** (see §4 for the full matrix). Inline: `strong`, `emphasis`, `code`,
 `strikethrough`, `underline`, `highlight`, `comment`, `link`, `image`. Headings: `h1`…`h6`,
@@ -203,8 +210,12 @@ empty doc / no selection and assert it never crashes (see `testCrashSafetySweepE
 
 ## 6. Roadmap hooks (where this is going)
 
-The command ids here are the **stable contract** that will also back the **MCP server** (MASTER-PLAN
-Phase 3): `run_command(id)` → `invokeCommand:`. The remaining Phase 1 work is to refactor the GUI's
-IBActions to *route through* this same registry (so "the UI just confirms what the harness proves" is
-literally true), and optionally extract the surface into an app-target `MPAutomation` class that the
-harness, the MCP, and the GUI all share. See `docs/MASTER-PLAN.md` §4.
+The command ids here are the **stable contract** that also backs the **MCP server** (MASTER-PLAN
+Phase 3): `run_command(id)` → `-[MPDocument invokeCommandID:sender:error:]` (call it directly — no
+need to go through the test harness). **The GUI-routing refactor is DONE (2026-06-29):** the registry
+lives on `MPDocument` in the app target and every editing IBAction delegates into it, so the menu,
+the toolbar, the harness, and the MCP share one behavior path — "the UI just confirms what the
+harness proves" is literally true. An app-target `MPAutomation` class was considered and dropped: the
+document already *is* the in-process control surface, so a separate class would be ceremony. The only
+Phase-1 item left is the periodic human GUI parity spot-check (MASTER-PLAN §11). See
+`docs/MASTER-PLAN.md` §4.

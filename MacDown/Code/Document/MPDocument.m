@@ -34,6 +34,14 @@
 
 static NSString * const kMPDefaultAutosaveName = @"Untitled";
 
+// Phase 1 command registry. A command block IS the editing action's one true
+// implementation; the matching IBAction is a thin delegation to it (see
+// -invokeCommandID:sender:error:). `doc` is the target document; `sender` is the
+// originating UI control (nil when driven by the harness/MCP).
+typedef void (^MPCommandBlock)(MPDocument *doc, id sender);
+
+static NSString * const kMPDocumentCommandErrorDomain = @"MPDocumentCommand";
+
 
 NS_INLINE NSString *MPEditorPreferenceKeyWithValueKey(NSString *key)
 {
@@ -1270,9 +1278,133 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
 }
 
 
-#pragma mark - IBAction
+#pragma mark - Command registry (Phase 1)
 
-- (IBAction)copyHtml:(id)sender
+// The one true table: stable command id -> the editing work. Every editing
+// IBAction below is now a thin delegation into this registry, and the test
+// harness / (future) MCP call -invokeCommandID:sender:error: with the same ids.
+// One behavior path means the GUI can only ever confirm what the harness drives.
+// To add a command: add a row here + a one-line IBAction (so the nib/toolbar can
+// wire a selector to it). The multi-line bodies live in the mp_do* helpers below
+// so the table stays readable.
++ (NSDictionary<NSString *, MPCommandBlock> *)mp_commandRegistry
+{
+    static NSDictionary<NSString *, MPCommandBlock> *registry = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        registry = @{
+            // Inline formatting
+            @"strong":        ^(MPDocument *d, id s){ [d.editor toggleForMarkupPrefix:@"**" suffix:@"**"]; },
+            @"emphasis":      ^(MPDocument *d, id s){ [d.editor toggleForMarkupPrefix:@"*" suffix:@"*"]; },
+            @"code":          ^(MPDocument *d, id s){ [d.editor toggleForMarkupPrefix:@"`" suffix:@"`"]; },
+            @"strikethrough": ^(MPDocument *d, id s){ [d.editor toggleForMarkupPrefix:@"~~" suffix:@"~~"]; },
+            @"underline":     ^(MPDocument *d, id s){ [d.editor toggleForMarkupPrefix:@"_" suffix:@"_"]; },
+            @"highlight":     ^(MPDocument *d, id s){ [d.editor toggleForMarkupPrefix:@"==" suffix:@"=="]; },
+            @"comment":       ^(MPDocument *d, id s){ [d.editor toggleForMarkupPrefix:@"<!--" suffix:@"-->"]; },
+            @"link":          ^(MPDocument *d, id s){ [d mp_doToggleLinkOrImageWithPrefix:@"[" suffix:@"]()"]; },
+            @"image":         ^(MPDocument *d, id s){ [d mp_doToggleLinkOrImageWithPrefix:@"![" suffix:@"]()"]; },
+            // Headings / paragraph
+            @"h1":            ^(MPDocument *d, id s){ [d.editor makeHeaderForSelectedLinesWithLevel:1]; },
+            @"h2":            ^(MPDocument *d, id s){ [d.editor makeHeaderForSelectedLinesWithLevel:2]; },
+            @"h3":            ^(MPDocument *d, id s){ [d.editor makeHeaderForSelectedLinesWithLevel:3]; },
+            @"h4":            ^(MPDocument *d, id s){ [d.editor makeHeaderForSelectedLinesWithLevel:4]; },
+            @"h5":            ^(MPDocument *d, id s){ [d.editor makeHeaderForSelectedLinesWithLevel:5]; },
+            @"h6":            ^(MPDocument *d, id s){ [d.editor makeHeaderForSelectedLinesWithLevel:6]; },
+            @"paragraph":     ^(MPDocument *d, id s){ [d.editor makeHeaderForSelectedLinesWithLevel:0]; },
+            // Blocks
+            @"ul":            ^(MPDocument *d, id s){ [d.editor toggleBlockWithPattern:@"^[\\*\\+-] \\S" prefix:d.preferences.editorUnorderedListMarker]; },
+            @"ol":            ^(MPDocument *d, id s){ [d.editor toggleBlockWithPattern:@"^[0-9]+ \\S" prefix:@"1. "]; },
+            @"blockquote":    ^(MPDocument *d, id s){ [d.editor toggleBlockWithPattern:@"^> \\S" prefix:@"> "]; },
+            @"indent":        ^(MPDocument *d, id s){ [d.editor indentSelectedLinesWithPadding:(d.preferences.editorConvertTabs ? @"    " : @"\t")]; },
+            @"unindent":      ^(MPDocument *d, id s){ [d.editor unindentSelectedLines]; },
+            @"newParagraph":  ^(MPDocument *d, id s){ [d mp_doInsertNewParagraph]; },
+            // Output
+            @"copyHtml":      ^(MPDocument *d, id s){ [d mp_doCopyHtml]; },
+            @"render":        ^(MPDocument *d, id s){ [d.renderer parseAndRenderLater]; },
+            // View / layout toggles
+            @"togglePreviewPane":   ^(MPDocument *d, id s){ [d toggleSplitterCollapsingEditorPane:NO]; },
+            @"toggleEditorPane":    ^(MPDocument *d, id s){ [d toggleSplitterCollapsingEditorPane:YES]; },
+            @"toggleToolbar":       ^(MPDocument *d, id s){ [d.windowForSheet toggleToolbarShown:s]; },
+            @"editorOneQuarter":    ^(MPDocument *d, id s){ [d setSplitViewDividerLocation:0.25]; },
+            @"editorThreeQuarters": ^(MPDocument *d, id s){ [d setSplitViewDividerLocation:0.75]; },
+            @"equalSplit":          ^(MPDocument *d, id s){ [d setSplitViewDividerLocation:0.5]; },
+            // Export (modal save panel — kept in the registry for GUI parity,
+            // but excluded from the headless harness sweep — it's modal).
+            @"exportHtml":    ^(MPDocument *d, id s){ [d mp_doExportHtml]; },
+            @"exportPdf":     ^(MPDocument *d, id s){ [d mp_doExportPdf]; },
+        };
+    });
+    return registry;
+}
+
++ (NSArray<NSString *> *)availableCommandIDs
+{
+    return [[self mp_commandRegistry].allKeys
+            sortedArrayUsingSelector:@selector(compare:)];
+}
+
+- (BOOL)invokeCommandID:(NSString *)commandID sender:(id)sender
+                  error:(NSError **)error
+{
+    MPCommandBlock block = [[self class] mp_commandRegistry][commandID];
+    if (!block)
+    {
+        if (error)
+            *error = [NSError errorWithDomain:kMPDocumentCommandErrorDomain
+                code:1
+                userInfo:@{NSLocalizedDescriptionKey:
+                    [NSString stringWithFormat:@"Unknown command id: %@",
+                        commandID]}];
+        return NO;
+    }
+    block(self, sender);
+    return YES;
+}
+
+#pragma mark - Command implementations (multi-line bodies for the registry)
+
+// Verbatim from the former -toggleLink:/-toggleImage: IBActions; both differ
+// only in the markup prefix, so they share one implementation now.
+- (void)mp_doToggleLinkOrImageWithPrefix:(NSString *)prefix
+                                  suffix:(NSString *)suffix
+{
+    BOOL inserted = [self.editor toggleForMarkupPrefix:prefix suffix:suffix];
+    if (!inserted)
+        return;
+
+    NSRange selectedRange = self.editor.selectedRange;
+    NSUInteger location = selectedRange.location + selectedRange.length + 2;
+    selectedRange = NSMakeRange(location, 0);
+
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    NSString *url = [pb URLForType:NSPasteboardTypeString].absoluteString;
+    if (url)
+    {
+        [self.editor insertText:url replacementRange:selectedRange];
+        selectedRange.length = url.length;
+    }
+    self.editor.selectedRange = selectedRange;
+}
+
+- (void)mp_doInsertNewParagraph
+{
+    NSRange range = self.editor.selectedRange;
+    NSUInteger location = range.location;
+    NSUInteger length = range.length;
+    NSString *content = self.editor.string;
+    NSInteger newlineBefore = [content locationOfFirstNewlineBefore:location];
+    NSUInteger newlineAfter =
+        [content locationOfFirstNewlineAfter:location + length - 1];
+
+    // If we are on an empty line, treat as normal return key; otherwise insert
+    // two newlines.
+    if (location == newlineBefore + 1 && location == newlineAfter)
+        [self.editor insertNewline:self];
+    else
+        [self.editor insertText:@"\n\n"];
+}
+
+- (void)mp_doCopyHtml
 {
     // Dis-select things in WebView so that it's more obvious we're NOT
     // respecting the selection range.
@@ -1292,7 +1424,7 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
     [pasteboard writeObjects:@[self.renderer.currentHtml]];
 }
 
-- (IBAction)exportHtml:(id)sender
+- (void)mp_doExportHtml
 {
     NSSavePanel *panel = [NSSavePanel savePanel];
     panel.allowedFileTypes = @[@"html"];
@@ -1318,13 +1450,13 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
     }];
 }
 
-- (IBAction)exportPdf:(id)sender
+- (void)mp_doExportPdf
 {
     NSSavePanel *panel = [NSSavePanel savePanel];
     panel.allowedFileTypes = @[@"pdf"];
     if (self.presumedFileName)
         panel.nameFieldStringValue = self.presumedFileName;
-    
+
     NSWindow *w = nil;
     NSArray *windowControllers = self.windowControllers;
     if (windowControllers.count > 0)
@@ -1343,197 +1475,49 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
     }];
 }
 
-- (IBAction)convertToH1:(id)sender
-{
-    [self.editor makeHeaderForSelectedLinesWithLevel:1];
-}
+#pragma mark - IBAction
 
-- (IBAction)convertToH2:(id)sender
-{
-    [self.editor makeHeaderForSelectedLinesWithLevel:2];
-}
+// Each editing IBAction is a one-line delegation into the command registry
+// (-invokeCommandID:sender:error:). The real work lives in the registry / mp_do*
+// helpers above, so the menu, the toolbar (via sendAction:), and the harness all
+// run the SAME code. `sender` is forwarded so AppKit-driven commands behave
+// exactly as before (e.g. toggleToolbar passes it through to NSWindow).
+- (IBAction)copyHtml:(id)sender      { [self invokeCommandID:@"copyHtml" sender:sender error:NULL]; }
+- (IBAction)exportHtml:(id)sender    { [self invokeCommandID:@"exportHtml" sender:sender error:NULL]; }
+- (IBAction)exportPdf:(id)sender     { [self invokeCommandID:@"exportPdf" sender:sender error:NULL]; }
 
-- (IBAction)convertToH3:(id)sender
-{
-    [self.editor makeHeaderForSelectedLinesWithLevel:3];
-}
+- (IBAction)convertToH1:(id)sender   { [self invokeCommandID:@"h1" sender:sender error:NULL]; }
+- (IBAction)convertToH2:(id)sender   { [self invokeCommandID:@"h2" sender:sender error:NULL]; }
+- (IBAction)convertToH3:(id)sender   { [self invokeCommandID:@"h3" sender:sender error:NULL]; }
+- (IBAction)convertToH4:(id)sender   { [self invokeCommandID:@"h4" sender:sender error:NULL]; }
+- (IBAction)convertToH5:(id)sender   { [self invokeCommandID:@"h5" sender:sender error:NULL]; }
+- (IBAction)convertToH6:(id)sender   { [self invokeCommandID:@"h6" sender:sender error:NULL]; }
+- (IBAction)convertToParagraph:(id)sender { [self invokeCommandID:@"paragraph" sender:sender error:NULL]; }
 
-- (IBAction)convertToH4:(id)sender
-{
-    [self.editor makeHeaderForSelectedLinesWithLevel:4];
-}
+- (IBAction)toggleStrong:(id)sender        { [self invokeCommandID:@"strong" sender:sender error:NULL]; }
+- (IBAction)toggleEmphasis:(id)sender      { [self invokeCommandID:@"emphasis" sender:sender error:NULL]; }
+- (IBAction)toggleInlineCode:(id)sender    { [self invokeCommandID:@"code" sender:sender error:NULL]; }
+- (IBAction)toggleStrikethrough:(id)sender { [self invokeCommandID:@"strikethrough" sender:sender error:NULL]; }
+- (IBAction)toggleUnderline:(id)sender     { [self invokeCommandID:@"underline" sender:sender error:NULL]; }
+- (IBAction)toggleHighlight:(id)sender     { [self invokeCommandID:@"highlight" sender:sender error:NULL]; }
+- (IBAction)toggleComment:(id)sender       { [self invokeCommandID:@"comment" sender:sender error:NULL]; }
+- (IBAction)toggleLink:(id)sender          { [self invokeCommandID:@"link" sender:sender error:NULL]; }
+- (IBAction)toggleImage:(id)sender         { [self invokeCommandID:@"image" sender:sender error:NULL]; }
 
-- (IBAction)convertToH5:(id)sender
-{
-    [self.editor makeHeaderForSelectedLinesWithLevel:5];
-}
+- (IBAction)toggleOrderedList:(id)sender   { [self invokeCommandID:@"ol" sender:sender error:NULL]; }
+- (IBAction)toggleUnorderedList:(id)sender { [self invokeCommandID:@"ul" sender:sender error:NULL]; }
+- (IBAction)toggleBlockquote:(id)sender    { [self invokeCommandID:@"blockquote" sender:sender error:NULL]; }
+- (IBAction)indent:(id)sender              { [self invokeCommandID:@"indent" sender:sender error:NULL]; }
+- (IBAction)unindent:(id)sender            { [self invokeCommandID:@"unindent" sender:sender error:NULL]; }
+- (IBAction)insertNewParagraph:(id)sender  { [self invokeCommandID:@"newParagraph" sender:sender error:NULL]; }
 
-- (IBAction)convertToH6:(id)sender
-{
-    [self.editor makeHeaderForSelectedLinesWithLevel:6];
-}
-
-- (IBAction)convertToParagraph:(id)sender
-{
-    [self.editor makeHeaderForSelectedLinesWithLevel:0];
-}
-
-- (IBAction)toggleStrong:(id)sender
-{
-    [self.editor toggleForMarkupPrefix:@"**" suffix:@"**"];
-}
-
-- (IBAction)toggleEmphasis:(id)sender
-{
-    [self.editor toggleForMarkupPrefix:@"*" suffix:@"*"];
-}
-
-- (IBAction)toggleInlineCode:(id)sender
-{
-    [self.editor toggleForMarkupPrefix:@"`" suffix:@"`"];
-}
-
-- (IBAction)toggleStrikethrough:(id)sender
-{
-    [self.editor toggleForMarkupPrefix:@"~~" suffix:@"~~"];
-}
-
-- (IBAction)toggleUnderline:(id)sender
-{
-    [self.editor toggleForMarkupPrefix:@"_" suffix:@"_"];
-}
-
-- (IBAction)toggleHighlight:(id)sender
-{
-    [self.editor toggleForMarkupPrefix:@"==" suffix:@"=="];
-}
-
-- (IBAction)toggleComment:(id)sender
-{
-    [self.editor toggleForMarkupPrefix:@"<!--" suffix:@"-->"];
-}
-
-- (IBAction)toggleLink:(id)sender
-{
-    BOOL inserted = [self.editor toggleForMarkupPrefix:@"[" suffix:@"]()"];
-    if (!inserted)
-        return;
-
-    NSRange selectedRange = self.editor.selectedRange;
-    NSUInteger location = selectedRange.location + selectedRange.length + 2;
-    selectedRange = NSMakeRange(location, 0);
-
-    NSPasteboard *pb = [NSPasteboard generalPasteboard];
-    NSString *url = [pb URLForType:NSPasteboardTypeString].absoluteString;
-    if (url)
-    {
-        [self.editor insertText:url replacementRange:selectedRange];
-        selectedRange.length = url.length;
-    }
-    self.editor.selectedRange = selectedRange;
-}
-
-- (IBAction)toggleImage:(id)sender
-{
-    BOOL inserted = [self.editor toggleForMarkupPrefix:@"![" suffix:@"]()"];
-    if (!inserted)
-        return;
-
-    NSRange selectedRange = self.editor.selectedRange;
-    NSUInteger location = selectedRange.location + selectedRange.length + 2;
-    selectedRange = NSMakeRange(location, 0);
-
-    NSPasteboard *pb = [NSPasteboard generalPasteboard];
-    NSString *url = [pb URLForType:NSPasteboardTypeString].absoluteString;
-    if (url)
-    {
-        [self.editor insertText:url replacementRange:selectedRange];
-        selectedRange.length = url.length;
-    }
-    self.editor.selectedRange = selectedRange;
-}
-
-- (IBAction)toggleOrderedList:(id)sender
-{
-    [self.editor toggleBlockWithPattern:@"^[0-9]+ \\S" prefix:@"1. "];
-}
-
-- (IBAction)toggleUnorderedList:(id)sender
-{
-    NSString *marker = self.preferences.editorUnorderedListMarker;
-    [self.editor toggleBlockWithPattern:@"^[\\*\\+-] \\S" prefix:marker];
-}
-
-- (IBAction)toggleBlockquote:(id)sender
-{
-    [self.editor toggleBlockWithPattern:@"^> \\S" prefix:@"> "];
-}
-
-- (IBAction)indent:(id)sender
-{
-    NSString *padding = @"\t";
-    if (self.preferences.editorConvertTabs)
-        padding = @"    ";
-    [self.editor indentSelectedLinesWithPadding:padding];
-}
-
-- (IBAction)unindent:(id)sender
-{
-    [self.editor unindentSelectedLines];
-}
-
-- (IBAction)insertNewParagraph:(id)sender
-{
-    NSRange range = self.editor.selectedRange;
-    NSUInteger location = range.location;
-    NSUInteger length = range.length;
-    NSString *content = self.editor.string;
-    NSInteger newlineBefore = [content locationOfFirstNewlineBefore:location];
-    NSUInteger newlineAfter =
-        [content locationOfFirstNewlineAfter:location + length - 1];
-
-    // If we are on an empty line, treat as normal return key; otherwise insert
-    // two newlines.
-    if (location == newlineBefore + 1 && location == newlineAfter)
-        [self.editor insertNewline:self];
-    else
-        [self.editor insertText:@"\n\n"];
-}
-
-- (IBAction)setEditorOneQuarter:(id)sender
-{
-    [self setSplitViewDividerLocation:0.25];
-}
-
-- (IBAction)setEditorThreeQuarters:(id)sender
-{
-    [self setSplitViewDividerLocation:0.75];
-}
-
-- (IBAction)setEqualSplit:(id)sender
-{
-    [self setSplitViewDividerLocation:0.5];
-}
-
-- (IBAction)toggleToolbar:(id)sender
-{
-    [self.windowForSheet toggleToolbarShown:sender];
-}
-
-- (IBAction)togglePreviewPane:(id)sender
-{
-    [self toggleSplitterCollapsingEditorPane:NO];
-}
-
-- (IBAction)toggleEditorPane:(id)sender
-{
-    [self toggleSplitterCollapsingEditorPane:YES];
-}
-
-- (IBAction)render:(id)sender
-{
-    [self.renderer parseAndRenderLater];
-}
+- (IBAction)setEditorOneQuarter:(id)sender    { [self invokeCommandID:@"editorOneQuarter" sender:sender error:NULL]; }
+- (IBAction)setEditorThreeQuarters:(id)sender { [self invokeCommandID:@"editorThreeQuarters" sender:sender error:NULL]; }
+- (IBAction)setEqualSplit:(id)sender          { [self invokeCommandID:@"equalSplit" sender:sender error:NULL]; }
+- (IBAction)toggleToolbar:(id)sender          { [self invokeCommandID:@"toggleToolbar" sender:sender error:NULL]; }
+- (IBAction)togglePreviewPane:(id)sender      { [self invokeCommandID:@"togglePreviewPane" sender:sender error:NULL]; }
+- (IBAction)toggleEditorPane:(id)sender       { [self invokeCommandID:@"toggleEditorPane" sender:sender error:NULL]; }
+- (IBAction)render:(id)sender                 { [self invokeCommandID:@"render" sender:sender error:NULL]; }
 
 // BUG FIX (blank-canvas, task 1216089018004712): explicit recovery for the
 // "two-panel blank canvas" idle bug. Test harness + future menu/keyboard

@@ -161,15 +161,18 @@
 /// All stable command ids the harness can invoke (sorted), e.g. @"strong",
 /// @"emphasis", @"h1"..@"h6", @"ul", @"ol", @"blockquote", @"indent", @"link".
 /// Same ids back the tests and (later) the MCP.
+///
+/// Phase 1: the registry itself now lives in the app target on MPDocument
+/// (`+[MPDocument availableCommandIDs]` / `-[MPDocument invokeCommandID:sender:error:]`),
+/// so the GUI's IBActions and the harness drive the SAME code. These methods are
+/// a thin façade over it.
 + (NSArray<NSString *> *)availableCommands;
 
-/// Maps a command id to the MPDocument selector it invokes (@"strong" -> "toggleStrong:").
-+ (NSDictionary<NSString *, NSString *> *)commandSelectorMap;
-
 /// Invokes an editing command by stable id against the current document, exactly
-/// as the toolbar/menu would. NO (with error) for unknown ids or no current
-/// document. Headless-safe for editor commands; @"exportHtml"/@"exportPdf" open a
-/// modal panel and are NOT for automation.
+/// as the toolbar/menu would (both funnel through the same registry). NO (with
+/// error) for unknown ids or no current document. Headless-safe for editor
+/// commands; @"exportHtml"/@"exportPdf" open a modal panel and are NOT for
+/// automation.
 + (BOOL)invokeCommand:(NSString *)commandId error:(NSError **)error;
 
 

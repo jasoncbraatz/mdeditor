@@ -563,77 +563,23 @@ static NSError *MPTestError(NSString *description, int code) {
 
 #pragma mark - Command Registry
 
-+ (NSDictionary<NSString *, NSString *> *)commandSelectorMap {
-    static NSDictionary *map = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        map = @{
-            // inline formatting
-            @"strong": @"toggleStrong:",
-            @"emphasis": @"toggleEmphasis:",
-            @"code": @"toggleInlineCode:",
-            @"strikethrough": @"toggleStrikethrough:",
-            @"underline": @"toggleUnderline:",
-            @"highlight": @"toggleHighlight:",
-            @"comment": @"toggleComment:",
-            @"link": @"toggleLink:",
-            @"image": @"toggleImage:",
-            // headings / paragraph
-            @"h1": @"convertToH1:", @"h2": @"convertToH2:", @"h3": @"convertToH3:",
-            @"h4": @"convertToH4:", @"h5": @"convertToH5:", @"h6": @"convertToH6:",
-            @"paragraph": @"convertToParagraph:",
-            // blocks
-            @"ul": @"toggleUnorderedList:",
-            @"ol": @"toggleOrderedList:",
-            @"blockquote": @"toggleBlockquote:",
-            @"indent": @"indent:",
-            @"unindent": @"unindent:",
-            @"newParagraph": @"insertNewParagraph:",
-            // output
-            @"copyHtml": @"copyHtml:",
-            @"render": @"render:",
-            // view / layout toggles
-            @"togglePreviewPane": @"togglePreviewPane:",
-            @"toggleEditorPane": @"toggleEditorPane:",
-            @"toggleToolbar": @"toggleToolbar:",
-            @"editorOneQuarter": @"setEditorOneQuarter:",
-            @"editorThreeQuarters": @"setEditorThreeQuarters:",
-            @"equalSplit": @"setEqualSplit:",
-            // export (modal save panel — NOT for automation)
-            @"exportHtml": @"exportHtml:",
-            @"exportPdf": @"exportPdf:",
-        };
-    });
-    return map;
-}
-
+// Phase 1: the command registry now lives in the app target on MPDocument, so
+// the GUI's IBActions and the harness drive the EXACT same code (one behavior
+// path). The harness is a thin façade over the document's registry; the id list
+// + behavior are owned by -[MPDocument mp_commandRegistry].
 + (NSArray<NSString *> *)availableCommands {
-    return [[self commandSelectorMap].allKeys
-            sortedArrayUsingSelector:@selector(compare:)];
+    return [MPDocument availableCommandIDs];
 }
 
 + (BOOL)invokeCommand:(NSString *)commandId error:(NSError **)error {
-    NSString *selName = [self commandSelectorMap][commandId];
-    if (!selName) {
-        if (error) *error = MPTestError(
-            [NSString stringWithFormat:@"Unknown command id: %@", commandId], 10);
-        return NO;
-    }
     MPDocument *doc = [self currentDocument];
     if (!doc) {
         if (error) *error = MPTestError(@"No current document to invoke command on", 11);
         return NO;
     }
-    SEL sel = NSSelectorFromString(selName);
-    if (![doc respondsToSelector:sel]) {
-        if (error) *error = MPTestError(
-            [NSString stringWithFormat:@"Document does not respond to %@", selName], 12);
+    // Unknown-id handling + dispatch are owned by the app-target registry.
+    if (![doc invokeCommandID:commandId sender:nil error:error])
         return NO;
-    }
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-    [doc performSelector:sel withObject:nil];
-#pragma clang diagnostic pop
     // Let any editor mutation settle on the runloop.
     [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
                              beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];

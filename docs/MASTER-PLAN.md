@@ -140,9 +140,13 @@ true rather than aspirational.
 > document windows transparent + off-screen; process-only env flag). 44 tests / 0 failures, fully
 > headless (verified: 2 docs + switch, zero on-screen windows). Reference: `docs/TEST-HARNESS.md`;
 > coverage + pre-ship pipeline: `docs/TEST-MATRIX.md`; runner: `Scripts/test.sh`.
-> **Remaining for Phase 1:** refactor the GUI IBActions to *route through* the registry (so the UI
-> only confirms what the harness proves), optionally extract an app-target `MPAutomation` shared by
-> harness+GUI+MCP, and add the cheap-win round-trips in `docs/TEST-MATRIX.md` §5.
+> **UPDATE 2026-06-29 (co-pilot):** the GUI-routing refactor is DONE — registry moved to the app
+> target on `MPDocument`; all 32 IBActions delegate into it; harness is a façade over it; 44/44 green.
+> See the "PHASE 1 ~DONE" note under "Done when" below. **Remaining for Phase 1:** just the human GUI
+> parity spot-check (the every-5th-handoff UI pass, §11 — not due yet). Optional polish carried to
+> §5/TEST-MATRIX §5: the cheap-win round-trips (h4–h6, link/image w/ seeded pasteboard, view-toggle
+> state asserts). The app-target `MPAutomation` idea was dropped as unnecessary (the document is the
+> control surface; the MCP calls `invokeCommandID:` directly).
 
 
 **Goal:** Grow `MPAutomation` until it can drive **every user-facing editing action** the toolbar &
@@ -178,8 +182,22 @@ toolbar crash (had a command-dispatch test existed).
 7. Reversibility: `git tag pre-phase1`; GUI refactor is behavior-preserving and covered by the new
    tests (run them before/after).
 
-**Done when:** ☑ command registry (`+invokeCommand:`) · ☐ GUI routes through it · ☑ per-command round-trip tests green ·
+**Done when:** ☑ command registry (`+invokeCommand:`) · ☑ GUI routes through it · ☑ per-command round-trip tests green ·
 ☑ crash-safety sweep green · ☐ GUI parity spot-check (human, see TEST-MATRIX §3).
+
+> **PHASE 1 ~DONE (commit pending, 2026-06-29).** The command registry now lives in the **app
+> target** on `MPDocument` (`+availableCommandIDs`, `-invokeCommandID:sender:error:`, private
+> `mp_commandRegistry` of id→work blocks). **All 32 editing IBActions are now one-line delegations
+> into it** — so the menu (responder chain) and the toolbar (`sendAction:`, d0e2853 path untouched)
+> reach the editing commands through the *same* registry the harness/MCP use. The `MPTestHarness`
+> registry is now a thin façade over the document's (`availableCommands`/`invokeCommand:` forward to
+> it; the old test-only `commandSelectorMap` was removed). `link`/`image` de-duped into one helper.
+> Behavior-preserving: **44/44 green headless** before AND after (`Scripts/test.sh`). Reversible:
+> tag `pre-phase1-gui-route`. The remaining unticked box is the **human GUI parity spot-check**,
+> which is the every-5th-handoff UI pass (see §11) — not due yet (counter at 2). An app-target
+> `MPAutomation` (vs. the registry living on `MPDocument`) was deemed unnecessary surgery: the
+> document IS the natural in-process control surface; Phase 3's MCP can call `invokeCommandID:`
+> directly. Files: `MPDocument.{h,m}`, `MPTestHarness.{h,m}`.
 
 ---
 
@@ -350,5 +368,7 @@ Between those, headless green is enough — keep dev cheap and flicker-free.
 | # | date | session shipped | UI-verified? | handoffs since last UI verify |
 |---|---|---|---|---|
 | 1 | 2026-06-29 | Phase 0 verified + cold-build fix (`pmh_parser.c`) + Phase 1 harness (registry, editor I/O, headless, docs) | NO (headless only) | 1 |
+| 2 | 2026-06-29 | Phase 1 GUI-routing: registry moved to app target on `MPDocument`; all 32 IBActions delegate to it; harness now a façade; link/image de-duped | NO (headless only, 44/44) | 2 |
 
 > Next session: add your row and increment the counter. At **5**, do the UI pass, set "UI-verified? = YES", and reset the counter to 0.
+> **At counter = 2 now → UI pass due by handoff #5 (i.e. within 3 more sessions). The next UI-touching change should do it sooner.**

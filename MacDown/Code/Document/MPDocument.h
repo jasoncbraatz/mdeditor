@@ -23,4 +23,15 @@
 @property (readonly) BOOL isPreviewReady;
 - (void)forceRefreshPreview;
 
+// Command registry (Phase 1) — the SINGLE implementation behind every editing
+// IBAction. Menus and the toolbar reach editing commands through their
+// IBActions, which now delegate to -invokeCommandID:sender:error:; the test
+// harness and the (future) MCP call the same method directly. That is what makes
+// "the GUI only confirms what the harness proves" literally true: one behavior
+// path, not two. Command ids are stable strings (e.g. @"strong", @"h1", @"ul").
+// See docs/TEST-HARNESS.md for the full id list.
++ (NSArray<NSString *> *)availableCommandIDs;
+- (BOOL)invokeCommandID:(NSString *)commandID sender:(id)sender
+                  error:(NSError **)error;
+
 @end

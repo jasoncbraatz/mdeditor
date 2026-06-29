@@ -109,16 +109,37 @@ static CGFloat itemWidth = 37;
 - (void)selectedToolbarItemGroupItem:(NSSegmentedControl *)sender
 {
     NSInteger selectedIndex = sender.selectedSegment;
-    
+    if (selectedIndex < 0)
+        return;
+
     NSToolbarItemGroup *selectedGroup = self->toolbarItemIdentifierObjectDictionary[sender.identifier];
-    NSToolbarItem *selectedItem = selectedGroup.subitems[selectedIndex];
-    
-    // Invoke the toolbar item's action
-    // Must convert to IMP to let the compiler know about the method definition
-    MPDocument *document = self.document;
-    IMP imp = [document methodForSelector:selectedItem.action];
-    void (*impFunc)(id) = (void *)imp;
-    impFunc(document);
+    if (![selectedGroup isKindOfClass:[NSToolbarItemGroup class]])
+        return;
+
+    NSArray<NSToolbarItem *> *subitems = selectedGroup.subitems;
+    if ((NSUInteger)selectedIndex >= subitems.count)
+        return;
+    NSToolbarItem *selectedItem = subitems[(NSUInteger)selectedIndex];
+
+    // Dispatch the selected sub-item's action.
+    //
+    // The original code cast the method IMP to a `void (*)(id)` and called it
+    // with only `self`, omitting the mandatory `_cmd` and `sender` arguments
+    // that every Objective-C method actually receives. Under ARC the target
+    // method's prologue retains its `sender` parameter (objc_storeStrong);
+    // because `sender` was never passed, it held a garbage register value that
+    // objc_retain dereferenced on entry -> EXC_BAD_ACCESS. This crashed every
+    // grouped toolbar button (bold/italic/underline, headings, lists, shift
+    // left/right). Route through AppKit's sendAction:to:from: instead, which
+    // builds the call with the correct signature and honors the target /
+    // responder chain and UI validation.
+    SEL action = selectedItem.action;
+    if (action == NULL && [selectedItem.view isKindOfClass:[NSControl class]])
+        action = ((NSControl *)selectedItem.view).action;
+    if (action == NULL)
+        return;
+
+    [NSApp sendAction:action to:self.document from:sender];
 }
 
 

@@ -62,10 +62,21 @@ static NSError *MPTestError(NSString *description, int code) {
 + (MPDocument *)_getActiveDocument {
     NSDocumentController *docController = [NSDocumentController sharedDocumentController];
     NSDocument *doc = docController.currentDocument;
-    if (![doc isKindOfClass:[MPDocument class]]) {
-        return nil;
+    if ([doc isKindOfClass:[MPDocument class]]) {
+        return (MPDocument *)doc;
     }
-    return (MPDocument *)doc;
+    // Fallback (fix 2026-06-29): under automated XCTest the app may not be frontmost, so
+    // -currentDocument is nil even though a document window is open. Prefer an MPDocument
+    // whose window is main/visible, else the most-recently-added MPDocument.
+    MPDocument *visible = nil, *anyDoc = nil;
+    for (NSDocument *d in docController.documents) {
+        if (![d isKindOfClass:[MPDocument class]]) continue;
+        anyDoc = (MPDocument *)d;
+        for (NSWindowController *wc in d.windowControllers) {
+            if (wc.window.isMainWindow || wc.window.isVisible) { visible = (MPDocument *)d; break; }
+        }
+    }
+    return visible ?: anyDoc;
 }
 
 + (WebView *)_getPreviewWebView {
@@ -163,8 +174,19 @@ static NSError *MPTestError(NSString *description, int code) {
 }
 
 + (BOOL)isPreviewBlank {
-    WebView *preview = [self _getPreviewWebView];
-    return [self _isWebViewBlank:preview];
+    // The blank-canvas BUG is the preview STAYING empty. A freshly-loaded WebView is briefly
+    // empty while it parses/renders, so an instantaneous read yields false positives. Pump the
+    // run loop up to ~3s: return NO the moment content appears; only report blank if it stays
+    // blank for the whole window (the actual bug). (fix 2026-06-29)
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:3.0];
+    BOOL blank = YES;
+    while ([deadline timeIntervalSinceNow] > 0) {
+        blank = [self _isWebViewBlank:[self _getPreviewWebView]];
+        if (!blank) break;
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                                 beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
+    return blank;
 }
 
 + (NSString *)previewContent {
@@ -222,7 +244,7 @@ static NSError *MPTestError(NSString *description, int code) {
     __block BOOL success = NO;
     __block NSError *localError = nil;
 
-    dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+    __block BOOL done = NO;
 
     [docController openDocumentWithContentsOfURL:url
                                          display:YES
@@ -239,10 +261,17 @@ static NSError *MPTestError(NSString *description, int code) {
                     [NSDate dateWithTimeIntervalSinceNow:0.1]];
             }
         }
-        dispatch_semaphore_signal(sema);
+        done = YES;
     }];
 
-    dispatch_semaphore_wait(sema, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)));
+    // Pump the main run loop instead of blocking on a semaphore: -openDocumentWithContentsOfURL:
+    // delivers its completion handler on the MAIN thread, so a blocking wait here deadlocks
+    // (the handler can never run) and every open "times out" with a bogus error. (fix 2026-06-29)
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+    while (!done && [deadline timeIntervalSinceNow] > 0) {
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                                 beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
 
     if (!success && error) {
         *error = localError ?: MPTestError(@"Unknown error opening file", 3);

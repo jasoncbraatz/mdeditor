@@ -50,6 +50,13 @@
 }
 
 - (void)tearDown {
+    // Close documents opened during the test so windows don't leak across tests — otherwise a
+    // stale prior window gets picked up as the "active" document and content reads go to the wrong
+    // preview. Copy the array since -close mutates the controller's documents list. (fix 2026-06-29)
+    for (NSDocument *doc in [[[NSDocumentController sharedDocumentController] documents] copy]) {
+        [doc close];
+    }
+
     // Clean up temporary directory
     [[NSFileManager defaultManager] removeItemAtPath:self.tempDir error:nil];
 

@@ -114,6 +114,65 @@
 /// Asserts no preview blank canvas bug detected; raises exception if fails
 + (void)assertNoBlankCanvasBug:(NSString *)context;
 
+
+#pragma mark - Headless / No-UI Test Mode
+/**
+ * Enables headless test mode: the app becomes an accessory (no Dock icon, never
+ * steals focus) and every document window is positioned far off-screen the moment
+ * its nib loads, so the test suite never flickers the user's desktop. The editor
+ * and preview still render normally (the window exists, just off every visible
+ * Space), so all reads/commands work. Auto-enabled when running under XCTest.
+ */
++ (void)enableHeadlessTestMode;
+
+/// YES if headless test mode is active.
++ (BOOL)isHeadlessTestMode;
+
+
+#pragma mark - Editor Input (drive the editor like a user)
+/// Replaces the entire editor contents with the given markdown.
++ (void)setMarkdown:(NSString *)markdown;
+
+/// Selects the given character range in the editor. Returns NO if out of range.
++ (BOOL)selectRange:(NSRange)range;
+
+/// Selects the whole document.
++ (void)selectAll;
+
+/// The current editor selection range.
++ (NSRange)selectedRange;
+
+/// The currently selected text (empty string if none).
++ (NSString *)selectedText;
+
+/// Selects the first occurrence of `substring`. Returns NO if not found.
++ (BOOL)selectSubstring:(NSString *)substring;
+
+
+#pragma mark - Command Registry (every toolbar/menu editing action)
+/// All stable command ids the harness can invoke (sorted), e.g. @"strong",
+/// @"emphasis", @"h1"..@"h6", @"ul", @"ol", @"blockquote", @"indent", @"link".
+/// Same ids back the tests and (later) the MCP.
++ (NSArray<NSString *> *)availableCommands;
+
+/// Maps a command id to the MPDocument selector it invokes (@"strong" -> "toggleStrong:").
++ (NSDictionary<NSString *, NSString *> *)commandSelectorMap;
+
+/// Invokes an editing command by stable id against the current document, exactly
+/// as the toolbar/menu would. NO (with error) for unknown ids or no current
+/// document. Headless-safe for editor commands; @"exportHtml"/@"exportPdf" open a
+/// modal panel and are NOT for automation.
++ (BOOL)invokeCommand:(NSString *)commandId error:(NSError **)error;
+
+
+#pragma mark - Layout / View State (for view-toggle commands)
+/// YES if the preview pane is showing (width != 0).
++ (BOOL)previewVisible;
+/// YES if the editor pane is showing (width != 0).
++ (BOOL)editorVisible;
+/// YES if the window toolbar is visible.
++ (BOOL)toolbarVisible;
+
 @end
 
 

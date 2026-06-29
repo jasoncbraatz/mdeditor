@@ -377,6 +377,22 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
     if (rectString)
         [controller.window setFrameFromString:rectString];
 
+    // Headless/automated-test hook (gated): when MPTestHarness has enabled headless
+    // mode, keep this window far off every visible Space so the XCTest suite never
+    // flickers the user's desktop. The window still exists and the WebView renders
+    // (unlike -orderOut:), so all harness reads/commands work. No effect in normal use.
+    if (getenv("MPHeadlessTestMode") != NULL)
+    {
+        // Headless automated test: hide this window. AppKit clamps off-screen windows
+        // back to a sliver, so alpha 0 is the real "invisible" guarantee (the WebView
+        // still renders). Process-only env flag => never affects normal app use.
+        controller.shouldCascadeWindows = NO;
+        controller.window.frameAutosaveName = @"";
+        [controller.window setFrameOrigin:NSMakePoint(-30000, -30000)];
+        controller.window.alphaValue = 0.0;
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    }
+
     self.highlighter =
         [[HGMarkdownHighlighter alloc] initWithTextView:self.editor
                                            waitInterval:0.0];

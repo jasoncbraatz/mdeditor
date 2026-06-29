@@ -11,6 +11,8 @@
 #import "MPDocument.h"
 
 
+static BOOL s_headlessMode = NO;
+
 static NSError *MPTestError(NSString *description, int code) {
     return [NSError errorWithDomain:@"MPTestHarness"
                                code:code
@@ -277,6 +279,19 @@ static NSError *MPTestError(NSString *description, int code) {
         *error = localError ?: MPTestError(@"Unknown error opening file", 3);
     }
 
+    // Headless: park the freshly-shown window off every visible Space so it never
+    // flickers the user's desktop. (Belt & suspenders to the app-side didLoadNib hook,
+    // which AppKit can override when it cascades the window on show.)
+    if (s_headlessMode && success) {
+        MPDocument *opened = [self currentDocument];
+        for (NSWindowController *wc in opened.windowControllers) {
+            wc.shouldCascadeWindows = NO;
+            wc.window.frameAutosaveName = @"";
+            [wc.window setFrameOrigin:NSMakePoint(-30000, -30000)];
+            wc.window.alphaValue = 0.0;
+        }
+    }
+
     return success;
 }
 
@@ -432,5 +447,180 @@ static NSError *MPTestError(NSString *description, int code) {
                    context, [self diagnosticReport]];
     }
 }
+
+
+#pragma mark - Headless / No-UI Test Mode
+
++ (void)initialize {
+    if (self == [MPTestHarness class]) {
+        // Auto-enable headless when running under XCTest so the suite never
+        // flickers Jason's desktop. Explicit callers (e.g. an MCP) use
+        // +enableHeadlessTestMode directly.
+        NSDictionary *env = NSProcessInfo.processInfo.environment;
+        if (env[@"XCTestConfigurationFilePath"] || env[@"XCTestSessionIdentifier"])
+            [self enableHeadlessTestMode];
+    }
+}
+
++ (void)enableHeadlessTestMode {
+    s_headlessMode = YES;
+    // A PROCESS-ONLY flag the app target (MPDocument) reads to hide new windows the
+    // instant their nib loads. Deliberately an env var, NOT NSUserDefaults: a persisted
+    // default would survive into Jason's real app and hide ITS windows too.
+    setenv("MPHeadlessTestMode", "1", 1);
+    // Accessory app: no Dock icon, never steals focus from the user's work.
+    if (NSApp)
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+}
+
++ (BOOL)isHeadlessTestMode {
+    return s_headlessMode;
+}
+
+
+#pragma mark - Editor Input
+
++ (NSTextView *)_editor {
+    MPDocument *doc = [self currentDocument];
+    if (!doc) return nil;
+    @try {
+        id ed = [doc valueForKey:@"editor"];
+        return [ed isKindOfClass:[NSTextView class]] ? (NSTextView *)ed : nil;
+    } @catch (NSException *e) { return nil; }
+}
+
++ (void)setMarkdown:(NSString *)markdown {
+    MPDocument *doc = [self currentDocument];
+    @try { [doc setValue:(markdown ?: @"") forKey:@"markdown"]; }
+    @catch (NSException *e) {}
+}
+
++ (BOOL)selectRange:(NSRange)range {
+    NSTextView *ed = [self _editor];
+    if (!ed) return NO;
+    if (NSMaxRange(range) > ed.string.length) return NO;
+    ed.selectedRange = range;
+    return YES;
+}
+
++ (void)selectAll {
+    NSTextView *ed = [self _editor];
+    if (ed) ed.selectedRange = NSMakeRange(0, ed.string.length);
+}
+
++ (NSRange)selectedRange {
+    NSTextView *ed = [self _editor];
+    return ed ? ed.selectedRange : NSMakeRange(NSNotFound, 0);
+}
+
++ (NSString *)selectedText {
+    NSTextView *ed = [self _editor];
+    if (!ed) return @"";
+    NSRange r = ed.selectedRange;
+    if (NSMaxRange(r) > ed.string.length) return @"";
+    return [ed.string substringWithRange:r];
+}
+
++ (BOOL)selectSubstring:(NSString *)substring {
+    NSTextView *ed = [self _editor];
+    if (!ed || !substring.length) return NO;
+    NSRange r = [ed.string rangeOfString:substring];
+    if (r.location == NSNotFound) return NO;
+    ed.selectedRange = r;
+    return YES;
+}
+
+
+#pragma mark - Command Registry
+
++ (NSDictionary<NSString *, NSString *> *)commandSelectorMap {
+    static NSDictionary *map = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        map = @{
+            // inline formatting
+            @"strong": @"toggleStrong:",
+            @"emphasis": @"toggleEmphasis:",
+            @"code": @"toggleInlineCode:",
+            @"strikethrough": @"toggleStrikethrough:",
+            @"underline": @"toggleUnderline:",
+            @"highlight": @"toggleHighlight:",
+            @"comment": @"toggleComment:",
+            @"link": @"toggleLink:",
+            @"image": @"toggleImage:",
+            // headings / paragraph
+            @"h1": @"convertToH1:", @"h2": @"convertToH2:", @"h3": @"convertToH3:",
+            @"h4": @"convertToH4:", @"h5": @"convertToH5:", @"h6": @"convertToH6:",
+            @"paragraph": @"convertToParagraph:",
+            // blocks
+            @"ul": @"toggleUnorderedList:",
+            @"ol": @"toggleOrderedList:",
+            @"blockquote": @"toggleBlockquote:",
+            @"indent": @"indent:",
+            @"unindent": @"unindent:",
+            @"newParagraph": @"insertNewParagraph:",
+            // output
+            @"copyHtml": @"copyHtml:",
+            @"render": @"render:",
+            // view / layout toggles
+            @"togglePreviewPane": @"togglePreviewPane:",
+            @"toggleEditorPane": @"toggleEditorPane:",
+            @"toggleToolbar": @"toggleToolbar:",
+            @"editorOneQuarter": @"setEditorOneQuarter:",
+            @"editorThreeQuarters": @"setEditorThreeQuarters:",
+            @"equalSplit": @"setEqualSplit:",
+            // export (modal save panel — NOT for automation)
+            @"exportHtml": @"exportHtml:",
+            @"exportPdf": @"exportPdf:",
+        };
+    });
+    return map;
+}
+
++ (NSArray<NSString *> *)availableCommands {
+    return [[self commandSelectorMap].allKeys
+            sortedArrayUsingSelector:@selector(compare:)];
+}
+
++ (BOOL)invokeCommand:(NSString *)commandId error:(NSError **)error {
+    NSString *selName = [self commandSelectorMap][commandId];
+    if (!selName) {
+        if (error) *error = MPTestError(
+            [NSString stringWithFormat:@"Unknown command id: %@", commandId], 10);
+        return NO;
+    }
+    MPDocument *doc = [self currentDocument];
+    if (!doc) {
+        if (error) *error = MPTestError(@"No current document to invoke command on", 11);
+        return NO;
+    }
+    SEL sel = NSSelectorFromString(selName);
+    if (![doc respondsToSelector:sel]) {
+        if (error) *error = MPTestError(
+            [NSString stringWithFormat:@"Document does not respond to %@", selName], 12);
+        return NO;
+    }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+    [doc performSelector:sel withObject:nil];
+#pragma clang diagnostic pop
+    // Let any editor mutation settle on the runloop.
+    [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                             beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
+    return YES;
+}
+
+
+#pragma mark - Layout / View State
+
++ (BOOL)_boolKey:(NSString *)key {
+    MPDocument *doc = [self currentDocument];
+    if (!doc) return NO;
+    @try { return [[doc valueForKey:key] boolValue]; }
+    @catch (NSException *e) { return NO; }
+}
++ (BOOL)previewVisible { return [self _boolKey:@"previewVisible"]; }
++ (BOOL)editorVisible  { return [self _boolKey:@"editorVisible"]; }
++ (BOOL)toolbarVisible { return [self _boolKey:@"toolbarVisible"]; }
 
 @end

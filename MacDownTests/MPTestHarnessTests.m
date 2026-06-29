@@ -258,4 +258,172 @@
     XCTAssertTrue([report containsString:@"BLANK CANVAS BUG"]);
 }
 
+
+#pragma mark - Scenario 7: Headless / No-UI Test Mode
+
+/// The whole point of the harness: a Claude can drive the app WITHOUT a visible UI.
+/// Under XCTest, headless mode auto-enables and document windows live off-screen.
+- (void)testHeadlessModeIsActiveAndWindowsOffscreen {
+    XCTAssertTrue([MPTestHarness isHeadlessTestMode],
+                  @"Headless mode should auto-enable under XCTest");
+
+    NSError *error = nil;
+    XCTAssertTrue([MPTestHarness openFileAtPath:self.testFile1 error:&error],
+                  @"open failed: %@", error);
+
+    // App must not be a normal Dock app while testing (no focus-steal / flicker).
+    XCTAssertEqual(NSApp.activationPolicy, NSApplicationActivationPolicyAccessory,
+                   @"App should be an accessory during headless tests");
+
+    // Every open document window should be parked far off every visible Space.
+    BOOL anyWindow = NO;
+    for (NSWindow *w in NSApp.windows) {
+        if (!w.isVisible) continue;
+        anyWindow = YES;
+        XCTAssertEqualWithAccuracy(w.alphaValue, 0.0, 0.001,
+                          @"Document window should be fully transparent (alpha=%f) so it never flickers Jason's desktop",
+                          w.alphaValue);
+    }
+    XCTAssertTrue(anyWindow, @"Expected at least one (off-screen) document window");
+}
+
+
+#pragma mark - Scenario 8: Command Registry — coverage
+
+- (void)testCommandRegistryCoversToolbarActions {
+    NSArray<NSString *> *cmds = [MPTestHarness availableCommands];
+    XCTAssertGreaterThanOrEqual(cmds.count, 25u,
+                                @"Registry should cover the toolbar/menu editing actions");
+    for (NSString *expected in @[@"strong", @"emphasis", @"code", @"strikethrough",
+                                 @"underline", @"highlight", @"comment", @"link", @"image",
+                                 @"h1", @"h2", @"h3", @"h4", @"h5", @"h6", @"paragraph",
+                                 @"ul", @"ol", @"blockquote", @"indent", @"unindent"]) {
+        XCTAssertTrue([cmds containsObject:expected],
+                      @"Registry missing command id '%@'", expected);
+    }
+}
+
+- (void)testInvokeUnknownCommandReturnsError {
+    NSError *error = nil;
+    XCTAssertTrue([MPTestHarness openFileAtPath:self.testFile1 error:&error]);
+    error = nil;
+    XCTAssertFalse([MPTestHarness invokeCommand:@"bogus-command" error:&error],
+                   @"Unknown command id should fail");
+    XCTAssertNotNil(error);
+}
+
+
+#pragma mark - Scenario 9: Per-command round-trips (the UI commands, headless)
+
+/// Open a doc, set known editor text, select the whole thing.
+- (void)_loadEditorWithText:(NSString *)text {
+    NSError *error = nil;
+    XCTAssertTrue([MPTestHarness openFileAtPath:self.testFile1 error:&error],
+                  @"open failed: %@", error);
+    [MPTestHarness setMarkdown:text];
+    [MPTestHarness selectAll];
+}
+
+- (void)_assertInlineCommand:(NSString *)cmd
+                  wrapsInput:(NSString *)input
+                    toResult:(NSString *)expected {
+    [self _loadEditorWithText:input];
+    NSError *error = nil;
+    XCTAssertTrue([MPTestHarness invokeCommand:cmd error:&error],
+                  @"invoke %@ failed: %@", cmd, error);
+    XCTAssertEqualObjects([MPTestHarness currentMarkdownContent], expected,
+                          @"command '%@' round-trip mismatch", cmd);
+}
+
+- (void)testCommand_strong        { [self _assertInlineCommand:@"strong"        wrapsInput:@"boldcheck" toResult:@"**boldcheck**"]; }
+- (void)testCommand_emphasis      { [self _assertInlineCommand:@"emphasis"      wrapsInput:@"emcheck"   toResult:@"*emcheck*"]; }
+- (void)testCommand_inlineCode    { [self _assertInlineCommand:@"code"          wrapsInput:@"codecheck" toResult:@"`codecheck`"]; }
+- (void)testCommand_strikethrough { [self _assertInlineCommand:@"strikethrough" wrapsInput:@"strike"    toResult:@"~~strike~~"]; }
+- (void)testCommand_underline     { [self _assertInlineCommand:@"underline"     wrapsInput:@"under"     toResult:@"_under_"]; }
+- (void)testCommand_highlight     { [self _assertInlineCommand:@"highlight"     wrapsInput:@"hl"        toResult:@"==hl=="]; }
+- (void)testCommand_comment       { [self _assertInlineCommand:@"comment"       wrapsInput:@"note"      toResult:@"<!--note-->"]; }
+
+- (void)testCommand_heading1 {
+    [self _loadEditorWithText:@"Title"];
+    NSError *error = nil;
+    XCTAssertTrue([MPTestHarness invokeCommand:@"h1" error:&error], @"h1 failed: %@", error);
+    XCTAssertEqualObjects([MPTestHarness currentMarkdownContent], @"# Title");
+}
+
+- (void)testCommand_heading3 {
+    [self _loadEditorWithText:@"Sub"];
+    NSError *error = nil;
+    XCTAssertTrue([MPTestHarness invokeCommand:@"h3" error:&error], @"h3 failed: %@", error);
+    XCTAssertEqualObjects([MPTestHarness currentMarkdownContent], @"### Sub");
+}
+
+- (void)testCommand_headingTogglesBackToParagraph {
+    [self _loadEditorWithText:@"Line"];
+    NSError *error = nil;
+    XCTAssertTrue([MPTestHarness invokeCommand:@"h2" error:&error]);
+    XCTAssertEqualObjects([MPTestHarness currentMarkdownContent], @"## Line");
+    [MPTestHarness selectAll];
+    XCTAssertTrue([MPTestHarness invokeCommand:@"paragraph" error:&error]);
+    XCTAssertEqualObjects([MPTestHarness currentMarkdownContent], @"Line");
+}
+
+- (void)testCommand_unorderedList {
+    [self _loadEditorWithText:@"item"];
+    NSError *error = nil;
+    XCTAssertTrue([MPTestHarness invokeCommand:@"ul" error:&error], @"ul failed: %@", error);
+    NSString *md = [MPTestHarness currentMarkdownContent];
+    XCTAssertTrue([md hasSuffix:@"item"], @"ul should keep content: '%@'", md);
+    XCTAssertTrue([md rangeOfString:@"item"].location >= 2,
+                  @"ul should prepend a list marker: '%@'", md);
+}
+
+- (void)testCommand_orderedList {
+    [self _loadEditorWithText:@"item"];
+    NSError *error = nil;
+    XCTAssertTrue([MPTestHarness invokeCommand:@"ol" error:&error], @"ol failed: %@", error);
+    XCTAssertEqualObjects([MPTestHarness currentMarkdownContent], @"1. item");
+}
+
+- (void)testCommand_blockquote {
+    [self _loadEditorWithText:@"quote"];
+    NSError *error = nil;
+    XCTAssertTrue([MPTestHarness invokeCommand:@"blockquote" error:&error], @"bq failed: %@", error);
+    XCTAssertEqualObjects([MPTestHarness currentMarkdownContent], @"> quote");
+}
+
+- (void)testCommand_indentUnindent {
+    [self _loadEditorWithText:@"line"];
+    NSError *error = nil;
+    XCTAssertTrue([MPTestHarness invokeCommand:@"indent" error:&error], @"indent failed: %@", error);
+    NSString *indented = [MPTestHarness currentMarkdownContent];
+    XCTAssertTrue([indented hasSuffix:@"line"] && indented.length > 4,
+                  @"indent should add leading padding: '%@'", indented);
+    [MPTestHarness selectAll];
+    XCTAssertTrue([MPTestHarness invokeCommand:@"unindent" error:&error], @"unindent failed: %@", error);
+    XCTAssertEqualObjects([MPTestHarness currentMarkdownContent], @"line",
+                          @"unindent should restore the line");
+}
+
+
+#pragma mark - Scenario 10: Crash-safety sweep (the d0e2853 class of bug)
+
+/// Invoke EVERY non-modal command on an empty doc with no selection — must not crash.
+/// (Excludes exportHtml/exportPdf, which open a modal save panel unsuitable for automation.)
+- (void)testCrashSafetySweepEmptyDocument {
+    NSError *error = nil;
+    XCTAssertTrue([MPTestHarness openFileAtPath:self.testFile1 error:&error]);
+    [MPTestHarness setMarkdown:@""];
+
+    NSSet *skip = [NSSet setWithArray:@[@"exportHtml", @"exportPdf"]];
+    for (NSString *cmd in [MPTestHarness availableCommands]) {
+        if ([skip containsObject:cmd]) continue;
+        [MPTestHarness selectRange:NSMakeRange(0, 0)];
+        NSError *e = nil;
+        XCTAssertTrue([MPTestHarness invokeCommand:cmd error:&e],
+                      @"command '%@' should invoke without error on empty doc: %@", cmd, e);
+        // Surviving to here = it did not crash, which is the point.
+    }
+    XCTAssertNotNil([MPTestHarness currentDocument], @"document should survive the sweep");
+}
+
 @end

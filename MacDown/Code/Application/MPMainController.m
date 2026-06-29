@@ -264,11 +264,14 @@ NS_INLINE void treat()
 
 - (NSString *)feedURLStringForUpdater:(SUUpdater *)updater
 {
-    // Auto-update DISABLED for this private fork (2026-06-29). Returning nil means Sparkle has no
-    // appcast to fetch: the app never phones home, and can't auto-update to upstream's binary
-    // (which would silently clobber Jason's customizations). Info.plist SU* feed keys also removed
-    // and SUEnableAutomaticChecks=NO. To re-enable later, restore a feed URL here + in Info.plist.
-    return nil;
+    // Auto-update DISABLED for this private fork. IMPORTANT: returning nil here made Sparkle's
+    // SUUpdater (which is instantiated by MainMenu.nib) abort during launch, and because it lives
+    // in the main nib that aborted the WHOLE main-nib load -> no menu bar, no window, no crash
+    // (the "no UI on launch" bug, root-caused + fixed 2026-06-29). Instead hand the updater an
+    // inert, OFFLINE feed: a local file:// URL that never advertises an update. The updater then
+    // initialises cleanly, never phones home (file scheme = no network), and can't clobber the
+    // fork. Belt+suspenders: SUEnableAutomaticChecks=NO keeps it from ever checking on its own.
+    return @"file:///dev/null";
 }
 
 

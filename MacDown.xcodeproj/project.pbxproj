@@ -1789,6 +1789,12 @@
 			baseConfigurationReference = 39EFCAE04F60154F0C8C5469 /* Pods-MacDown.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				// mdeditor fork: pin Release to -O0. The Xcode 26 -Os default exposes a latent
+				// undefined-behavior bug in the launch path that silently aborts main-nib (MainMenu)
+				// loading -> no menu bar, no window, no crash (the 'no UI on launch' bug, 2026-06-29).
+				// Debug (-O0) and old MacDown were never affected. Perf is irrelevant for this editor.
+				// TODO(follow-up): narrow the UB to the offending file/line and restore optimization.
+				GCC_OPTIMIZATION_LEVEL = 0;
 				CODE_SIGN_IDENTITY = "";
 				COMBINE_HIDPI_IMAGES = YES;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;

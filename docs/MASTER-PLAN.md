@@ -133,6 +133,18 @@ true rather than aspirational.
 
 ## 4. PHASE 1 — The harness as UI-grade control surface *(TOP PRIORITY)*
 
+> **PROGRESS 2026-06-29 (commits `6ae2634`, `a29aea0`).** The harness now affords driving EVERY
+> toolbar/menu editing action one-by-one, **headless**: a command registry (`+invokeCommand:error:`
+> over stable ids → the 31 `MPDocument` IBActions), editor input (`setMarkdown`/`selectRange`/
+> `selectSubstring`/…), layout-state getters, and a **no-flicker headless mode** (app = accessory;
+> document windows transparent + off-screen; process-only env flag). 44 tests / 0 failures, fully
+> headless (verified: 2 docs + switch, zero on-screen windows). Reference: `docs/TEST-HARNESS.md`;
+> coverage + pre-ship pipeline: `docs/TEST-MATRIX.md`; runner: `Scripts/test.sh`.
+> **Remaining for Phase 1:** refactor the GUI IBActions to *route through* the registry (so the UI
+> only confirms what the harness proves), optionally extract an app-target `MPAutomation` shared by
+> harness+GUI+MCP, and add the cheap-win round-trips in `docs/TEST-MATRIX.md` §5.
+
+
 **Goal:** Grow `MPAutomation` until it can drive **every user-facing editing action** the toolbar &
 menus expose, and read back the result — so a test (or the MCP, or an auto-tester) can do anything a
 human does in the UI, headless.
@@ -166,8 +178,8 @@ toolbar crash (had a command-dispatch test existed).
 7. Reversibility: `git tag pre-phase1`; GUI refactor is behavior-preserving and covered by the new
    tests (run them before/after).
 
-**Done when:** ☐ command registry · ☐ GUI routes through it · ☐ per-command round-trip tests green ·
-☐ crash-safety sweep green · ☐ GUI parity spot-check.
+**Done when:** ☑ command registry (`+invokeCommand:`) · ☐ GUI routes through it · ☑ per-command round-trip tests green ·
+☑ crash-safety sweep green · ☐ GUI parity spot-check (human, see TEST-MATRIX §3).
 
 ---
 
@@ -280,6 +292,7 @@ clean · ☐ analyze clean · ☐ CVE sweep · ☐ hardening review · ☐ `SECU
 
 ## 9. LUT — facts a future Claude should not pay tokens to re-derive
 
+- Test harness: `docs/TEST-HARNESS.md` (every call), `docs/TEST-MATRIX.md` (coverage + pre-ship pipeline), `Scripts/test.sh` (headless runner). Headless mode auto-enables under XCTest — windows go transparent+off-screen (alpha 0 is the real guarantee; AppKit clamps off-screen position to a sliver). Flag is the PROCESS-ONLY env var `MPHeadlessTestMode` (never NSUserDefaults — that would hide the real app).
 - Build/install/verify recipe: see `mdeditor-SESSION-2026-06-29-launchfix.md` §"Build/install recipe".
   DerivedData: `~/Library/Developer/Xcode/DerivedData/MacDown-ayupkpyrvtmaxbcnyzlnauvioyai/...`.
 - Release is `-O0` on purpose (e645264). Don't "optimize" it without doing Phase 5.
@@ -303,3 +316,39 @@ clean · ☐ analyze clean · ☐ CVE sweep · ☐ hardening review · ☐ `SECU
 4. Ship it. Tick the box(es). Update §9 LUT with anything hard-won.
 5. Teacher out (`lessons.py add`), sync out (commit + push), run `~/Scripts/gate-selfcheck.sh`.
 6. Improve THIS plan and the handoff prompt for the next Claude. Pay it forward. 🌳
+
+---
+
+## 11. Handoff cadence, UI-verification ledger & the complete-vs-handoff rule
+
+### 11.1 When to hand off (complete vs continue)
+This is a **multi-phase** project, so most sessions END WITH A HANDOFF — a copy-pastable continuation
+prompt for the next session (suspension-bridge methodology). Crisply:
+
+- **Work remains anywhere** (an unticked box in this plan, an unfinished phase, a long piece still in
+  progress) → **EMIT THE HANDOFF.** Between-phase and mid-incremental stops both count. A handoff
+  MEANS "there is more to do; here's exactly where to pick up."
+- **No work remains anywhere** (every box below ticked, nothing teed up — the whole effort is done)
+  → **EMIT NO HANDOFF.** Say "✅ Complete — cleared for takeoff." The *absence* of a handoff is the
+  done-signal.
+- **Unsure → ask Jason** ("more to do, or complete?") rather than defaulting either way.
+
+(Canonical, project-agnostic version: `~/Desktop/downloads/HANDOFF-GATE.md` §G-F. This is the
+mdeditor application of it: until Phases 1–7 are all ticked, the project is NOT complete, so
+between-phase sessions hand off.)
+
+### 11.2 Periodic full UI build — every 5th handoff
+Headless tests can't catch purely-visual or modal-only regressions (theme rendering, toolbar
+appearance, the export panels). So **every 5th handoff, the session MUST run the full human UI
+verification** (`docs/TEST-MATRIX.md` §3) against a fresh Debug build, and record it in the ledger.
+Between those, headless green is enough — keep dev cheap and flicker-free.
+
+- Rule: if **handoffs-since-last-UI-verification ≥ 5**, do the UI pass THIS session before handing off.
+- Doing it sooner after any UI-touching change is encouraged.
+
+### 11.3 Ledger (append one row per session; reset the counter on a UI pass)
+| # | date | session shipped | UI-verified? | handoffs since last UI verify |
+|---|---|---|---|---|
+| 1 | 2026-06-29 | Phase 0 verified + cold-build fix (`pmh_parser.c`) + Phase 1 harness (registry, editor I/O, headless, docs) | NO (headless only) | 1 |
+
+> Next session: add your row and increment the counter. At **5**, do the UI pass, set "UI-verified? = YES", and reset the counter to 0.

@@ -220,8 +220,7 @@ blocks merges. Local fast loop too.
 4. **Acceptance:** a PR shows a green check; an intentionally-broken command turns it red.
 5. Reversibility: CI is additive; deleting `.travis.yml` is reversible via git.
 
-**Done when:** ☐ `Scripts/test.sh` · ☐ pre-push hook · ☐ GH Actions green (**from a fresh clone** —
-G-S #45 guard) · ☐ coverage artifact · ☐ `.travis.yml` retired.
+**Done when:** ☑ `Scripts/test.sh` · ☑ pre-push hook (`Scripts/pre-push` + `Scripts/install-git-hooks.sh`) · ☑ GH Actions workflow added (`.github/workflows/ci.yml`, **fresh-clone** build+test on `macos-26`/Xcode 26, Debug+Release — G-S #45 guard; **first cloud run on next push confirms the green check**) · ☑ coverage artifact (xcresult uploaded + xccov summary) · ☑ `.travis.yml` retired.
 
 ---
 
@@ -369,6 +368,7 @@ Between those, headless green is enough — keep dev cheap and flicker-free.
 |---|---|---|---|---|
 | 1 | 2026-06-29 | Phase 0 verified + cold-build fix (`pmh_parser.c`) + Phase 1 harness (registry, editor I/O, headless, docs) | NO (headless only) | 1 |
 | 2 | 2026-06-29 | Phase 1 GUI-routing: registry moved to app target on `MPDocument`; all 32 IBActions delegate to it; harness now a façade; link/image de-duped | NO (headless only, 44/44) | 2 |
+| 3 | 2026-06-29 | Phase 2 CI/CD: `.github/workflows/ci.yml` (macos-26 / Xcode 26, **fresh-clone**, Debug+Release matrix, coverage artifact, informational `analyze` job) + `Scripts/pre-push` hook & `install-git-hooks.sh` + retired `.travis.yml`. Local suite 44/0; cloud run confirms on push. | NO (headless only, 44/44) | 3 |
 
 > Next session: add your row and increment the counter. At **5**, do the UI pass, set "UI-verified? = YES", and reset the counter to 0.
-> **At counter = 2 now → UI pass due by handoff #5 (i.e. within 3 more sessions). The next UI-touching change should do it sooner.**
+> **At counter = 3 now → UI pass due by handoff #5 (i.e. within 2 more sessions). The next UI-touching change should do it sooner.**

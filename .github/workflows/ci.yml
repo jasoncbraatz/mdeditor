@@ -1,0 +1,130 @@
+name: CI
+
+# mdeditor — SOTA CI (MASTER-PLAN Phase 2).
+# The whole point: a FRESH CLONE (no darwin working-copy state) must build + test green
+# in the cloud. This is also our mechanical guard for HANDOFF-GATE G-S #45 — a source file
+# saved only on darwin and never committed (how MPTestHarness.{h,m} was once lost) fails to
+# compile here even if darwin's dirty checkout builds fine.
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: build+test (${{ matrix.configuration }})
+    # macos-26 is the only GH-hosted image carrying Xcode 26.x (macos-15 tops out at 16.4).
+    # darwin / the verified local build use Xcode 26.6; keep CI on the same major.
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    env:
+      WORKSPACE: MacDown.xcworkspace
+      SCHEME: MacDown
+    steps:
+      - name: Checkout (fresh clone, submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Select Xcode (latest stable — expect 26.x)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Toolchain versions
+        run: |
+          sw_vers
+          xcodebuild -version
+          ruby -v
+          pod --version
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: Pods
+          key: pods-${{ runner.os }}-${{ hashFiles('Podfile.lock') }}
+          restore-keys: |
+            pods-${{ runner.os }}-
+
+      - name: pod install
+        run: pod install --repo-update
+
+      - name: Build + Test (${{ matrix.configuration }}, headless, coverage)
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild test \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration ${{ matrix.configuration }} \
+            CODE_SIGNING_ALLOWED=NO \
+            -enableCodeCoverage YES \
+            -resultBundlePath "build/${{ matrix.configuration }}.xcresult"
+
+      - name: Coverage summary
+        if: ${{ always() }}
+        run: |
+          bundle="build/${{ matrix.configuration }}.xcresult"
+          if [ -d "$bundle" ]; then
+            echo "## Coverage (${{ matrix.configuration }})" >> "$GITHUB_STEP_SUMMARY"
+            xcrun xccov view --report "$bundle" 2>/dev/null | head -40 >> "$GITHUB_STEP_SUMMARY" || \
+              echo "(xccov report unavailable)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload result bundle
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcresult-${{ matrix.configuration }}
+          path: build/${{ matrix.configuration }}.xcresult
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Static analysis is INFORMATIONAL for now (continue-on-error). MASTER-PLAN Phase 4 (§7.4)
+  # promotes `xcodebuild analyze` to merge-blocking once the inherited hoedown/pmh C is cleaned.
+  analyze:
+    name: clang analyze (informational)
+    runs-on: macos-26
+    continue-on-error: true
+    env:
+      WORKSPACE: MacDown.xcworkspace
+      SCHEME: MacDown
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: Pods
+          key: pods-${{ runner.os }}-${{ hashFiles('Podfile.lock') }}
+          restore-keys: |
+            pods-${{ runner.os }}-
+      - name: pod install
+        run: pod install --repo-update
+      - name: xcodebuild analyze
+        run: |
+          set -o pipefail
+          xcodebuild analyze \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CLANG_ANALYZER_OUTPUT=default

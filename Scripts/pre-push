@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+#
+# mdeditor — pre-push git hook (MASTER-PLAN Phase 2). Refuse to push a red tree.
+#
+# Install once:  Scripts/install-git-hooks.sh   (symlinks this -> .git/hooks/pre-push)
+# Skip once:     PRE_PUSH_SKIP=1 git push        (or:  git push --no-verify)
+#
+# Runs the canonical headless suite (Scripts/test.sh). Exit 0 = green = push proceeds.
+
+set -euo pipefail
+
+if [ "${PRE_PUSH_SKIP:-0}" = "1" ]; then
+  echo "pre-push: skipped (PRE_PUSH_SKIP=1)"
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+echo "pre-push: running headless suite (Scripts/test.sh) — green required to push."
+echo "          skip once:  PRE_PUSH_SKIP=1 git push   |   git push --no-verify"
+
+if "$repo_root/Scripts/test.sh" -q; then
+  echo "pre-push: GREEN — pushing."
+  exit 0
+else
+  echo "pre-push: RED — push aborted. Fix the suite (or PRE_PUSH_SKIP=1 to override)." >&2
+  exit 1
+fi

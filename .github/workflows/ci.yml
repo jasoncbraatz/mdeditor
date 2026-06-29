@@ -24,10 +24,13 @@ jobs:
     name: build+test (${{ matrix.configuration }})
     # macos-26 is the only GH-hosted image carrying Xcode 26.x (macos-15 tops out at 16.4).
     # darwin / the verified local build use Xcode 26.6; keep CI on the same major.
-    # NOTE: ONLY_ACTIVE_ARCH=YES on the test step — Release config defaults to a universal
-    # (arm64+x86_64) build, but the Sparkle 1.18 pod binary is single-arch, so the x86_64
-    # test-target link fails (symbols not found). We only need to TEST on the runner's arch.
-    # (Sparkle removal is MASTER-PLAN Phase 4 §7.2; revisit universal builds then.)
+    # NOTE on the test-step build settings (needed to run tests under the RELEASE config):
+    #   ENABLE_TESTABILITY=YES — Release defaults it NO, so the app target does not export its
+    #     symbols and MacDownTests fails to link (Undefined symbols: _OBJC_CLASS_$_MPAsset,
+    #     MPPreferences, MPTestHarness, _MPGetObjectFromJavaScript, ...). Debug defaults YES.
+    #   ONLY_ACTIVE_ARCH=YES — Release defaults to a universal (arm64+x86_64) build; we only
+    #     need to TEST on the runner's arch, and it sidesteps the Sparkle 1.18 single-arch pod
+    #     (Sparkle removal is MASTER-PLAN Phase 4 §7.2; revisit universal builds then).
     runs-on: macos-26
     strategy:
       fail-fast: false
@@ -76,6 +79,7 @@ jobs:
             -configuration ${{ matrix.configuration }} \
             CODE_SIGNING_ALLOWED=NO \
             ONLY_ACTIVE_ARCH=YES \
+            ENABLE_TESTABILITY=YES \
             -enableCodeCoverage YES \
             -resultBundlePath "build/${{ matrix.configuration }}.xcresult"
 

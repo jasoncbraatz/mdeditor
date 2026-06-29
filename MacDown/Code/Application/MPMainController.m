@@ -264,9 +264,11 @@ NS_INLINE void treat()
 
 - (NSString *)feedURLStringForUpdater:(SUUpdater *)updater
 {
-    if (self.preferences.updateIncludesPreReleases)
-        return [NSBundle mainBundle].infoDictionary[@"SUBetaFeedURL"];
-    return [NSBundle mainBundle].infoDictionary[@"SUFeedURL"];
+    // Auto-update DISABLED for this private fork (2026-06-29). Returning nil means Sparkle has no
+    // appcast to fetch: the app never phones home, and can't auto-update to upstream's binary
+    // (which would silently clobber Jason's customizations). Info.plist SU* feed keys also removed
+    // and SUEnableAutomaticChecks=NO. To re-enable later, restore a feed URL here + in Info.plist.
+    return nil;
 }
 
 

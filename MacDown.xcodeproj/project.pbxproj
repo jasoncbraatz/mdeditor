@@ -1777,8 +1777,8 @@
 				GCC_PREFIX_HEADER = "MacDown/Code/MacDown-Prefix.pch";
 				INFOPLIST_FILE = "MacDown/MacDown-Info.plist";
 				MACOSX_DEPLOYMENT_TARGET = 10.13;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.uranusjr.${PRODUCT_NAME:rfc1034identifier:lower}-debug";
-				PRODUCT_NAME = MacDown;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.jasoncbraatz.${PRODUCT_NAME:rfc1034identifier:lower}-debug";
+				PRODUCT_NAME = mdeditor;
 				SDKROOT = macosx;
 				WRAPPER_EXTENSION = app;
 			};
@@ -1795,8 +1795,8 @@
 				GCC_PREFIX_HEADER = "MacDown/Code/MacDown-Prefix.pch";
 				INFOPLIST_FILE = "MacDown/MacDown-Info.plist";
 				MACOSX_DEPLOYMENT_TARGET = 10.13;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.uranusjr.${PRODUCT_NAME:rfc1034identifier:lower}";
-				PRODUCT_NAME = MacDown;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.jasoncbraatz.${PRODUCT_NAME:rfc1034identifier:lower}";
+				PRODUCT_NAME = mdeditor;
 				SDKROOT = macosx;
 				WRAPPER_EXTENSION = app;
 			};
@@ -1806,7 +1806,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8CDC5EA0050D2F722FB1AADD /* Pods-MacDownTests.debug.xcconfig */;
 			buildSettings = {
-				BUNDLE_LOADER = "$(BUILT_PRODUCTS_DIR)/MacDown.app/Contents/MacOS/MacDown";
+				BUNDLE_LOADER = "$(BUILT_PRODUCTS_DIR)/mdeditor.app/Contents/MacOS/mdeditor";
 				CLANG_ENABLE_MODULES = NO;
 				COMBINE_HIDPI_IMAGES = YES;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -1825,7 +1825,7 @@
 					"$(USER_LIBRARY_DIR)/Developer/Xcode/DerivedData/MacDown-ggdtxvuybojeqbhjydkhilziizrv/Build/Products/Debug",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.13;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.uranusjr.${PRODUCT_NAME:rfc1034identifier:lower}";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.jasoncbraatz.${PRODUCT_NAME:rfc1034identifier:lower}";
 				PRODUCT_NAME = MacDownTests;
 				TEST_HOST = "$(BUNDLE_LOADER)";
 				WRAPPER_EXTENSION = xctest;
@@ -1836,7 +1836,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 0D0EC0DE9FEA22F962083921 /* Pods-MacDownTests.release.xcconfig */;
 			buildSettings = {
-				BUNDLE_LOADER = "$(BUILT_PRODUCTS_DIR)/MacDown.app/Contents/MacOS/MacDown";
+				BUNDLE_LOADER = "$(BUILT_PRODUCTS_DIR)/mdeditor.app/Contents/MacOS/mdeditor";
 				CLANG_ENABLE_MODULES = NO;
 				COMBINE_HIDPI_IMAGES = YES;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -1851,7 +1851,7 @@
 					"$(USER_LIBRARY_DIR)/Developer/Xcode/DerivedData/MacDown-ggdtxvuybojeqbhjydkhilziizrv/Build/Products/Debug",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.13;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.uranusjr.${PRODUCT_NAME:rfc1034identifier:lower}";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.jasoncbraatz.${PRODUCT_NAME:rfc1034identifier:lower}";
 				PRODUCT_NAME = MacDownTests;
 				TEST_HOST = "$(BUNDLE_LOADER)";
 				WRAPPER_EXTENSION = xctest;

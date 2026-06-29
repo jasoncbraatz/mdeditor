@@ -80,7 +80,7 @@ true rather than aspirational.
 | Build | Release pinned to `GCC_OPTIMIZATION_LEVEL=0` (launch-path UB workaround, commit e645264). Builds clean on Xcode 26.6. |
 | Install | `/Applications/mdeditor.app`, ad-hoc signed, bundle id `com.jasoncbraatz.mdeditor`. |
 | Toolbar | Grouped-button crash FIXED (commit d0e2853) — dispatch via `sendAction:to:from:`. |
-| **Test target** | ✅ GREEN. `MacDownTests` compiles & runs headless: **26 tests, 0 failures** (verified 2026-06-29, master, Xcode 26.6). `MPTestHarness.{h,m}` are **present and committed** at `MacDown/Code/Testing/` (commits `09cfad8` + `1da04da`) — NOT lost. The earlier "MISSING" claim was a wrong-directory check: it looked at `MacDownTests/MPTestHarness.*`, but the files live under `MacDown/Code/Testing/`. `MPTestHarnessTests` 6/6 incl. `testSequentialFileOpensWithIdle` (blank-canvas repro). Other tracked suites: `MPAssetTests`, `MPColorTests`, `MPHTMLTabularizeTests`, `MPPreferencesTests`, `MPStringLookupTests`, `MPUtilityTests`. |
+| **Test target** | ✅ GREEN. `MacDownTests` compiles & runs headless: **26 tests, 0 failures** (verified 2026-06-29, master, Xcode 26.6). `MPTestHarness.{h,m}` are **present and committed** at `MacDown/Code/Testing/` (commits `09cfad8` + `1da04da`) — NOT lost. The earlier "MISSING" claim was a wrong-directory check: it looked at `MacDownTests/MPTestHarness.*`, but the files live under `MacDown/Code/Testing/`. `MPTestHarnessTests` 6/6 incl. `testSequentialFileOpensWithIdle` (blank-canvas repro). Other tracked suites: `MPAssetTests`, `MPColorTests`, `MPHTMLTabularizeTests`, `MPPreferencesTests`, `MPStringLookupTests`, `MPUtilityTests`. **Cold-clone-safe as of `12fafb5`** — generated `pmh_parser.c` is now committed (was gitignored); a fresh clone builds first-try. |
 | Harness spec (already written) | `MPTestHarnessTests.m` calls: `+openFileAtPath:error:`, `+openFileAtPath:timeout:error:`, `+isPreviewBlank`, `+previewText`, `+isPreviewReady`, `+isPreviewWebViewValid`, `+forceRefreshPreview`, `+simulateIdleForSeconds:`, `+diagnosticReport`. tearDown closes all `NSDocumentController` documents. |
 | CLI | `macdown-cmd` target builds the `macdown` CLI. `MPArgumentProcessor` is minimal today (help/version/arguments only). Opening/piping handled in `MPMainController` via the prefs domain (see rename footgun, Phase 6). |
 | URL scheme | `x-macdown://` declared (`CFBundleURLTypes`, name "Macdown custom control"). Good transport seed for the MCP. |
@@ -94,7 +94,7 @@ true rather than aspirational.
 
 ## 3. PHASE 0 — Foundations: get the harness target GREEN headless ✅ DONE (verified 2026-06-29)
 
-**✅ STATUS: COMPLETE.** `xcodebuild test -workspace MacDown.xcworkspace -scheme MacDown -configuration Debug CODE_SIGNING_ALLOWED=NO` → **TEST SUCCEEDED, 26 tests / 0 failures** on master (2026-06-29). The premise below ("MPTestHarness is missing") was FALSE — the files exist at `MacDown/Code/Testing/MPTestHarness.{h,m}`, committed (`09cfad8`/`1da04da`) and pushed. No rebuild was needed; this session VERIFIED the floor and corrected the doc rot. **Next bite: Phase 1.**
+**✅ STATUS: COMPLETE.** `xcodebuild test -workspace MacDown.xcworkspace -scheme MacDown -configuration Debug CODE_SIGNING_ALLOWED=NO` → **TEST SUCCEEDED, 26 tests / 0 failures** on master (2026-06-29). The premise below ("MPTestHarness is missing") was FALSE — the files exist at `MacDown/Code/Testing/MPTestHarness.{h,m}`, committed (`09cfad8`/`1da04da`) and pushed. No rebuild was needed. A thorough re-verification (2026-06-29) then went further: a **from-scratch clone** test exposed a real cold-build defect — the project compiles the *generated* `Dependency/peg-markdown-highlight/pmh_parser.c`, but it was gitignored with no pre-build phase producing it, so the FIRST build of a fresh clone failed (`Build input file cannot be found: pmh_parser.c`); a 2nd build passed because attempt #1 left the file behind. darwin's warm working copy hid this. **FIXED** (commit `12fafb5`): the generated parser is now committed. **Proven:** a brand-new clone now builds+tests green on the FIRST build (26/0, RC=0). **Next bite: Phase 1.**
 
 **Goal (met):** `xcodebuild test` runs the existing `MacDownTests` to completion, headless, pass/fail visible. This is the floor everything stands on.
 
@@ -127,7 +127,7 @@ true rather than aspirational.
 **Files:** `MacDown/Code/Automation/MPAutomation.{h,m}` (new), `MacDownTests/MPTestHarness.{h,m}`
 (new shim), `MacDown.xcodeproj/project.pbxproj` (target membership), `Scripts/test.sh` (new, §7).
 
-**Done when:** ☑ test target compiles · ☑ `xcodebuild test` green headless (26/0, 2026-06-29) · ☑ new files committed+pushed (master `1da04da`).
+**Done when:** ☑ test target compiles · ☑ `xcodebuild test` green headless (26/0, 2026-06-29) · ☑ new files committed+pushed (master `1da04da`) · ☑ **FRESH-CLONE first-build green** (cold-build defect found+fixed `12fafb5`; verified by a brand-new clone, 26/0 RC=0).
 
 ---
 
@@ -293,6 +293,7 @@ clean · ☐ analyze clean · ☐ CVE sweep · ☐ hardening review · ☐ `SECU
 - Relevant UTIs to set as handler: `net.daringfireball.markdown`, `public.markdown`,
   `net.ia.markdown`, `com.unknown.md` (+ `.md`/`.markdown` extensions).
 - No scripting (`sdef`) today; `x-macdown://` URL scheme + `macdown` CLI are the transport seeds.
+- `Dependency/peg-markdown-highlight/pmh_parser.c` is a GENERATED file (greg ← `pmh_grammar.leg`) now COMMITTED (`12fafb5`) — was gitignored, which broke first-build of a fresh clone (no pre-build phase makes it). Regenerate+recommit if the `.leg` grammar changes (Phase 4/5). Lesson: a warm working copy hides missing generated artifacts — ALWAYS sanity-check a `git clone` build, not just darwin's checkout.
 
 ## 10. How to take a bite (every session)
 1. `git pull --ff-only` (this repo + claude-blackbook). Read this file top-to-bottom.

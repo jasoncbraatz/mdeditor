@@ -179,16 +179,19 @@ blocks merges. Local fast loop too.
 **Steps:**
 1. **Local:** `Scripts/test.sh` (xcbeautify-piped `xcodebuild test`, `-enableCodeCoverage YES`,
    `-resultBundlePath build/last.xcresult`). A `Scripts/pre-push` git hook that runs the logic suite.
-2. **Cloud:** `.github/workflows/ci.yml` on `macos-15` (or latest GH image w/ Xcode 26): cache Pods,
-   `pod install`, `xcodebuild build` + `test`, upload `.xcresult` + coverage as artifacts, fail on
-   test failure or `xcodebuild analyze` warnings. Matrix: Debug + Release (Release catches the kind
-   of `-Os`/optimization regressions we hit).
+2. **Cloud:** `.github/workflows/ci.yml` on `macos-15` (or latest GH image w/ Xcode 26): **check out a
+   FRESH CLONE** (no darwin working-copy state), cache Pods, `pod install`, `xcodebuild build` + `test`,
+   upload `.xcresult` + coverage as artifacts, fail on test failure or `xcodebuild analyze` warnings.
+   Matrix: Debug + Release (Release catches the kind of `-Os`/optimization regressions we hit). The
+   fresh-clone build is also our **mechanical guard for HANDOFF-GATE G-S #45**: a source file that was
+   saved only on darwin and never committed (how `MPTestHarness.{h,m}` was lost) fails to compile here
+   even when darwin's dirty checkout builds green.
 3. Decommission `.travis.yml` (dead) — remove or replace; note in commit why.
 4. **Acceptance:** a PR shows a green check; an intentionally-broken command turns it red.
 5. Reversibility: CI is additive; deleting `.travis.yml` is reversible via git.
 
-**Done when:** ☐ `Scripts/test.sh` · ☐ pre-push hook · ☐ GH Actions green · ☐ coverage artifact ·
-☐ `.travis.yml` retired.
+**Done when:** ☐ `Scripts/test.sh` · ☐ pre-push hook · ☐ GH Actions green (**from a fresh clone** —
+G-S #45 guard) · ☐ coverage artifact · ☐ `.travis.yml` retired.
 
 ---
 

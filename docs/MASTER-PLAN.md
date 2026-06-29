@@ -220,7 +220,7 @@ blocks merges. Local fast loop too.
 4. **Acceptance:** a PR shows a green check; an intentionally-broken command turns it red.
 5. Reversibility: CI is additive; deleting `.travis.yml` is reversible via git.
 
-**Done when:** ☑ `Scripts/test.sh` · ☑ pre-push hook (`Scripts/pre-push` + `Scripts/install-git-hooks.sh`) · ☑ GH Actions workflow added (`.github/workflows/ci.yml`, **fresh-clone** build+test on `macos-26`/Xcode 26, Debug+Release — G-S #45 guard; **first cloud run on next push confirms the green check**) · ☑ coverage artifact (xcresult uploaded + xccov summary) · ☑ `.travis.yml` retired.
+**Done when:** ☑ `Scripts/test.sh` · ☑ pre-push hook (`Scripts/pre-push` + `Scripts/install-git-hooks.sh`) · ☑ GH Actions **GREEN from a fresh clone** (`.github/workflows/ci.yml`, `macos-26`/Xcode 26, Debug+Release matrix — G-S #45 guard; verified run [28405776615](https://github.com/jasoncbraatz/mdeditor/actions/runs/28405776615) @ `eba20dc`, all jobs green incl. informational analyze) · ☑ coverage artifact (xcresult uploaded + xccov summary) · ☑ `.travis.yml` retired.
 
 ---
 
@@ -309,6 +309,9 @@ clean · ☐ analyze clean · ☐ CVE sweep · ☐ hardening review · ☐ `SECU
 
 ## 9. LUT — facts a future Claude should not pay tokens to re-derive
 
+- **CI (Phase 2):** `.github/workflows/ci.yml` on `macos-26`/Xcode 26, fresh clone (submodules recursive) → `pod install --repo-update` (Pods cached on `Podfile.lock`) → `xcodebuild test` Debug+Release. **The Release leg MUST pass `ENABLE_TESTABILITY=YES ONLY_ACTIVE_ARCH=YES`** or MacDownTests fails to link (Release defaults testability NO → undefined app symbols; and Sparkle 1.18 is single-arch). Coverage = `.xcresult` artifact + xccov step-summary. `analyze` job is informational (continue-on-error) until Phase 4 cleans the C. `Scripts/pre-push` runs `Scripts/test.sh` (Debug only) before any push; install via `Scripts/install-git-hooks.sh`; skip with `PRE_PUSH_SKIP=1` / `--no-verify`.
+- **gh footgun:** this working copy has remotes `origin`=jasoncbraatz/mdeditor AND `upstream`=MacDownApp/macdown, so bare `gh` resolves to UPSTREAM. Default is now pinned (`gh repo set-default jasoncbraatz/mdeditor`); if a future clone misbehaves, pass `-R jasoncbraatz/mdeditor`.
+
 - Test harness: `docs/TEST-HARNESS.md` (every call), `docs/TEST-MATRIX.md` (coverage + pre-ship pipeline), `Scripts/test.sh` (headless runner). Headless mode auto-enables under XCTest — windows go transparent+off-screen (alpha 0 is the real guarantee; AppKit clamps off-screen position to a sliver). Flag is the PROCESS-ONLY env var `MPHeadlessTestMode` (never NSUserDefaults — that would hide the real app).
 - Build/install/verify recipe: see `mdeditor-SESSION-2026-06-29-launchfix.md` §"Build/install recipe".
   DerivedData: `~/Library/Developer/Xcode/DerivedData/MacDown-ayupkpyrvtmaxbcnyzlnauvioyai/...`.
@@ -368,7 +371,7 @@ Between those, headless green is enough — keep dev cheap and flicker-free.
 |---|---|---|---|---|
 | 1 | 2026-06-29 | Phase 0 verified + cold-build fix (`pmh_parser.c`) + Phase 1 harness (registry, editor I/O, headless, docs) | NO (headless only) | 1 |
 | 2 | 2026-06-29 | Phase 1 GUI-routing: registry moved to app target on `MPDocument`; all 32 IBActions delegate to it; harness now a façade; link/image de-duped | NO (headless only, 44/44) | 2 |
-| 3 | 2026-06-29 | Phase 2 CI/CD: `.github/workflows/ci.yml` (macos-26 / Xcode 26, **fresh-clone**, Debug+Release matrix, coverage artifact, informational `analyze` job) + `Scripts/pre-push` hook & `install-git-hooks.sh` + retired `.travis.yml`. Local suite 44/0; cloud run confirms on push. | NO (headless only, 44/44) | 3 |
+| 3 | 2026-06-29 | Phase 2 CI/CD: `.github/workflows/ci.yml` (macos-26 / Xcode 26, **fresh-clone**, Debug+Release matrix, coverage artifact, informational `analyze` job) + `Scripts/pre-push` hook & `install-git-hooks.sh` + retired `.travis.yml`. **CI confirmed GREEN** (run 28405776615 @ `eba20dc`) after fixing a Release-only link gap (`ENABLE_TESTABILITY=YES` + `ONLY_ACTIVE_ARCH=YES` on the test step — Release defaults testability NO). Local suite 44/0. | NO (headless only, 44/44) | 3 |
 
 > Next session: add your row and increment the counter. At **5**, do the UI pass, set "UI-verified? = YES", and reset the counter to 0.
 > **At counter = 3 now → UI pass due by handoff #5 (i.e. within 2 more sessions). The next UI-touching change should do it sooner.**

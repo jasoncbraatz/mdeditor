@@ -324,8 +324,15 @@ static NSError *MPTestError(NSString *description, int code) {
     for (NSDocument *doc in docController.documents) {
         if (![doc isKindOfClass:[MPDocument class]]) continue;
         if ([[(MPDocument *)doc fileURL] isEqual:url]) {
-            [[(MPDocument *)doc windowControllers].firstObject showWindow:nil];
-            [NSApp activateIgnoringOtherApps:YES];
+            NSWindowController *wc = [(MPDocument *)doc windowControllers].firstObject;
+            if (s_headlessMode) {
+                // Stay invisible: never front/activate under headless; keep it parked.
+                wc.window.alphaValue = 0.0;
+                [wc.window setFrameOrigin:NSMakePoint(-30000, -30000)];
+            } else {
+                [wc showWindow:nil];
+                [NSApp activateIgnoringOtherApps:YES];
+            }
             return YES;
         }
     }
@@ -475,6 +482,29 @@ static NSError *MPTestError(NSString *description, int code) {
 
 + (BOOL)isHeadlessTestMode {
     return s_headlessMode;
+}
+
++ (NSArray<NSWindow *> *)onscreenVisibleWindows {
+    NSMutableArray *result = [NSMutableArray array];
+    for (NSWindow *w in NSApp.windows) {
+        if (!w.isVisible) continue;
+        if (w.alphaValue < 0.01) continue;          // transparent => not seen
+        BOOL onScreen = NO;
+        for (NSScreen *s in NSScreen.screens) {
+            if (NSIntersectsRect(w.frame, s.frame)) { onScreen = YES; break; }
+        }
+        if (onScreen) [result addObject:w];
+    }
+    return result;
+}
+
++ (void)enforceHeadlessOnAllWindows {
+    if (!s_headlessMode) return;
+    for (NSWindow *w in NSApp.windows) {
+        if (w.alphaValue > 0.0) w.alphaValue = 0.0;
+        if (NSMinX(w.frame) > -10000.0)
+            [w setFrameOrigin:NSMakePoint(-30000, -30000)];
+    }
 }
 
 

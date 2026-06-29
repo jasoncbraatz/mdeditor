@@ -263,28 +263,30 @@
 
 /// The whole point of the harness: a Claude can drive the app WITHOUT a visible UI.
 /// Under XCTest, headless mode auto-enables and document windows live off-screen.
-- (void)testHeadlessModeIsActiveAndWindowsOffscreen {
+- (void)testHeadlessModeKeepsEveryWindowInvisible {
     XCTAssertTrue([MPTestHarness isHeadlessTestMode],
                   @"Headless mode should auto-enable under XCTest");
 
     NSError *error = nil;
-    XCTAssertTrue([MPTestHarness openFileAtPath:self.testFile1 error:&error],
-                  @"open failed: %@", error);
-
-    // App must not be a normal Dock app while testing (no focus-steal / flicker).
+    // Exercise EVERY window code path: open two docs and switch between them.
+    XCTAssertTrue([MPTestHarness openFileAtPath:self.testFile1 error:&error], @"open1: %@", error);
     XCTAssertEqual(NSApp.activationPolicy, NSApplicationActivationPolicyAccessory,
-                   @"App should be an accessory during headless tests");
+                   @"App should be an accessory (no Dock icon / focus steal) during tests");
+    XCTAssertEqual([MPTestHarness onscreenVisibleWindows].count, 0u,
+                   @"After open #1, NO window may be visible on the user's screen");
 
-    // Every open document window should be parked far off every visible Space.
-    BOOL anyWindow = NO;
-    for (NSWindow *w in NSApp.windows) {
-        if (!w.isVisible) continue;
-        anyWindow = YES;
-        XCTAssertEqualWithAccuracy(w.alphaValue, 0.0, 0.001,
-                          @"Document window should be fully transparent (alpha=%f) so it never flickers Jason's desktop",
-                          w.alphaValue);
-    }
-    XCTAssertTrue(anyWindow, @"Expected at least one (off-screen) document window");
+    XCTAssertTrue([MPTestHarness openFileAtPath:self.testFile2 error:&error], @"open2: %@", error);
+    XCTAssertEqual([MPTestHarness onscreenVisibleWindows].count, 0u,
+                   @"After open #2, NO window may be visible");
+
+    [MPTestHarness switchToDocumentWithURL:[NSURL fileURLWithPath:self.testFile1] error:&error];
+    XCTAssertEqual([MPTestHarness onscreenVisibleWindows].count, 0u,
+                   @"After switching documents, NO window may be visible (switch must not front/activate)");
+
+    // The windows EXIST (they render) — they're just invisible, not absent.
+    BOOL anyDocWindow = NO;
+    for (NSWindow *w in NSApp.windows) { if (w.isVisible) { anyDocWindow = YES; break; } }
+    XCTAssertTrue(anyDocWindow, @"Expected invisible-but-present document windows");
 }
 
 

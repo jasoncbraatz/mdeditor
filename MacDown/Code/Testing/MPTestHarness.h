@@ -128,6 +128,14 @@
 /// YES if headless test mode is active.
 + (BOOL)isHeadlessTestMode;
 
+/// Windows a human could actually see right now (visible + ~opaque + overlapping a
+/// screen). Under headless mode this MUST be empty — a reusable no-flicker assertion.
++ (NSArray<NSWindow *> *)onscreenVisibleWindows;
+
+/// Forces every current window invisible + parked (headless only). Belt-and-suspenders
+/// forcing function: call any time to guarantee nothing is on the user's screen.
++ (void)enforceHeadlessOnAllWindows;
+
 
 #pragma mark - Editor Input (drive the editor like a user)
 /// Replaces the entire editor contents with the given markdown.

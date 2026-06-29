@@ -178,7 +178,12 @@ Pods/
 Tools/__pycache__/
 Dependency/version/version.h
 Dependency/peg-markdown-highlight/pmh_parser_core.c
-Dependency/peg-markdown-highlight/pmh_parser.c
+# pmh_parser.c is now COMMITTED (was generated-and-ignored). It is generated from
+# pmh_grammar.leg via `make -C Dependency/peg-markdown-highlight` (greg). We commit it so a
+# FRESH CLONE builds first-try on the strict Xcode build system (the generator is not wired as
+# a pre-build phase, so a cold build otherwise fails: 'Build input file cannot be found').
+# If you ever change pmh_grammar.leg, regenerate and re-commit. See MASTER-PLAN Phase 0.
+#Dependency/peg-markdown-highlight/pmh_parser.c
 Dependency/peg-markdown-highlight/*.o
 Dependency/peg-markdown-highlight/greg/*.o
 Dependency/peg-markdown-highlight/greg/*.o-*

@@ -339,6 +339,19 @@ commands; the MCP shells to those. Phase later to a richer AppleScript `sdef` on
 > **Next bites** (SECURITY-AUDIT): finding 7 parser fuzz (hoedown+pmh under ASan/UBSan), finding 8 CVE
 > sweep (LibYAML 0.1 first), or finding 5 App Sandbox (bigger).
 
+> **PROGRESS 2026-06-30 (co-pilot, finding 8 — dependency CVE sweep DONE).** All 8 pods enumerated
+> vs known CVEs (table in SECURITY-AUDIT §8). One real reachable vuln found & fixed: **LibYAML 0.1.4
+> CVE-2014-2525** — heap overflow in `yaml_parser_scan_uri_escapes` (no `STRING_EXTEND` before the
+> octet copy), reachable via a malicious `.md`'s YAML front-matter (`NSString+Lookup -[frontMatter:]`
+> -> `YAMLSerialization` -> LibYAML). The CocoaPods `LibYAML` spec is frozen at 0.1.4 (no patched
+> release), so the official upstream guard is applied via a **`Podfile` `post_install` hook**
+> (idempotent, chmods the read-only pod source, CI-safe); canonical patch
+> `Scripts/patches/libyaml-cve-2014-2525.patch`. Verified: patch lands `scanner.c:2714`, build green,
+> headless **67/0**. Tag `pre-cve-libyaml`. Other 7 pods clean. hoedown 3.0.7 = no formal CVE; its
+> memory-safety is finding 7 (ASan fuzz), into which the YAML URI-escape path is also folded.
+> **Next bites** (SECURITY-AUDIT): finding 7 parser fuzz (hoedown + pmh + the LibYAML scanner under
+> ASan/UBSan), or finding 5 App Sandbox (bigger).
+
 **Goal:** It's ours and auditable. Remove/lock down anything that's an attack surface. Bank a written
 audit. (Was "Priority 2" in the original brief — now a first-class phase.)
 
@@ -363,7 +376,7 @@ audit. (Was "Priority 2" in the original brief — now a first-class phase.)
    + `code-review` skills.
 
 **Done when:** ☑ WebView hardened (sanitize+CSP+remote-load block, 2026-06-30) · ☑ Sparkle removed (7627fef, 2026-06-30) · ☐ parser fuzz
-clean · ☐ analyze clean · ☐ CVE sweep · ☐ hardening review · ☑ `SECURITY-AUDIT.md` banked (living doc, 9 findings, 2026-06-30).
+clean · ☐ analyze clean · ☑ CVE sweep (2026-06-30, LibYAML 0.1.4 CVE-2014-2525 patched) · ☐ hardening review · ☑ `SECURITY-AUDIT.md` banked (living doc, 9 findings, 2026-06-30).
 
 ---
 
@@ -426,6 +439,8 @@ clean · ☐ analyze clean · ☐ CVE sweep · ☐ hardening review · ☑ `SECU
 - **Remote subresources no longer render in the preview** (`![](http://…)` images / remote CSS) — intended anti-beacon/SSRF behavior of the `willSendRequest` block. To re-enable, gate `mp_isAllowedPreviewResourceURL:` behind a preference (teed up).
 - **Codegen escaping footgun:** when a Python patcher EMITS Objective-C regex string literals, backslashes cross two layers — write `\\\\b` in the Python string to land `\\b` in the `.m` (ObjC then compiles `\\b` → regex `\b`). Verify the WRITTEN file with `grep`, not the generator.
 - **`open <app> <file>` (two positional paths) opens them as TWO separate items** — the file goes to its DEFAULT handler, NOT `<app>`. To open a file in a SPECIFIC build: `open -a <full-path.app> <file>`. (Bit a live eyeball 2026-06-30.)
+
+- **Pods are patched via a `Podfile` `post_install` hook (not by editing `Pods/`)** — `Pods/` is gitignored, so the SSOT for any dependency patch is the committed `Podfile` hook + a banked patch in `Scripts/patches/`. Current hooks: **LibYAML 0.1.4 CVE-2014-2525** (`STRING_EXTEND` guard in `yaml_parser_scan_uri_escapes`). The hook chmods the read-only pod source, is idempotent (skips if the fix marker `STRING_EXTEND(parser, *string)` is present), aborts loudly if the anchor `*(string->pointer++) = octet;` ever changes, and runs in CI too (CI does `pod install --repo-update`). To verify after `pod install`: `grep -n "CVE-2014-2525" Pods/LibYAML/src/scanner.c`. Reversible: tag `pre-cve-libyaml`.
 
 ## 10. How to take a bite (every session)
 1. `git pull --ff-only` (this repo + claude-blackbook). Read this file top-to-bottom.

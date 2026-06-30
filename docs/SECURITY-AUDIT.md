@@ -35,7 +35,7 @@ Out of scope (single-user local tool): multi-user auth, server hardening, remote
 | 5 | No App Sandbox, no Hardened Runtime (no entitlements file) | MEDIUM | PARTIAL 2026-06-30 (Hardened Runtime ON; App Sandbox deferred) |
 | 6 | Local transports (`x-macdown://` + CLI) — input validation | LOW | Reviewed (guarded) |
 | 7 | C parsers (hoedown 3.0.7, pmh_parser.c) not fuzzed under ASan | MEDIUM | OPEN |
-| 8 | Dependency CVE sweep | MEDIUM | OPEN |
+| 8 | Dependency CVE sweep | MEDIUM | DONE 2026-06-30 (8 pods swept; LibYAML 0.1.4 CVE-2014-2525 patched) |
 | 9 | `xcodebuild analyze` not yet CI-blocking | LOW | OPEN |
 
 ---
@@ -165,14 +165,37 @@ could trigger a crash or memory-safety UB. Tee up a dedicated bite: build the pa
 `-fsanitize=address,undefined`, run a corpus of adversarial markdown, fix/wrap any finding. (Ties to
 MASTER-PLAN Phase 5, which is already chasing an `-Os` UB.)
 
-### 8. Dependency CVE sweep (OPEN, MEDIUM)
+### 8. Dependency CVE sweep (DONE 2026-06-30, MEDIUM)
 
-Pods after Sparkle removal (8): `handlebars-objc ~>1.4`, `hoedown ~>3.0.7` (patched fork via the
-`MacDownApp/cocoapods-specs` source), `JJPluralForm ~>2.1`, `LibYAML ~>0.1`, `M13OrderedDictionary
-~>1.1`, `MASPreferences ~>1.3`, `PAPreferences ~>0.4`, `GBCli ~>1.1` (macdown-cmd only). Several are
-old and pinned low (10.6/10.8 deployment targets). **`LibYAML 0.1`** in particular warrants a look
-(libyaml has a CVE history). Action: enumerate versions vs known CVEs; fork-and-own + patch per
-doctrine §12 if a vuln is found. Not yet performed.
+All 8 pods (post-Sparkle) enumerated against known CVEs (versions from `Podfile.lock`):
+
+| Pod | Locked version | Attacker-reachable? | CVE finding |
+|---|---|---|---|
+| LibYAML | **0.1.4** | YES — parses `.md` YAML front-matter | **CVE-2014-2525** (heap overflow in `yaml_parser_scan_uri_escapes`, exec/crash; fixed upstream 0.1.6) + pre-0.1.5 CVE-2013-6393. **PATCHED** (see below). |
+| hoedown | 3.0.7 | YES — parses all `.md` body | No formal CVE in 3.0.7 (the autolink/email-link issue was 3.0.1 + a renderer override mdeditor does not use). XSS class covered by finding 1; memory-safety = finding 7 (ASan fuzz). |
+| handlebars-objc | 1.4.5 | No (templates are bundled/trusted) | None known. |
+| JJPluralForm | 2.1 | No (localization plurals) | None known. |
+| M13OrderedDictionary | 1.1.0 | No (in-proc data structure) | None known. |
+| MASPreferences | 1.3 | No (prefs window UI) | None known. |
+| PAPreferences | 0.5 | No (NSUserDefaults wrapper) | None known. |
+| GBCli | 1.1 | No (macdown-cmd arg parsing, local) | None known. |
+
+**LibYAML 0.1.4 — CVE-2014-2525 PATCHED 2026-06-30.** The decoded octet in
+`yaml_parser_scan_uri_escapes()` was copied into the heap string buffer with **no `STRING_EXTEND`**,
+so a long run of percent-escaped bytes in a URI/`%TAG` overflows the allocation — reachable from a
+malicious `.md`'s YAML front-matter (`NSString+Lookup.m -[frontMatter:]` -> `YAMLSerialization` ->
+LibYAML) when the "Detect Jekyll front-matter" preference is on. The CocoaPods `LibYAML` spec is
+**frozen at 0.1.4** (the `~> 0.1` constraint resolves to 0.1.4 — no patched release is published), so
+a version bump is unavailable. **Fix:** the official upstream guard (`if (!STRING_EXTEND(parser,
+*string)) return 0;` before the octet copy) is applied in place by a **`Podfile` `post_install`
+hook** — idempotent, chmods the read-only pod source, CI-safe (re-applies on every `pod install`).
+Canonical patch banked at `Scripts/patches/libyaml-cve-2014-2525.patch`. Verified: patch lands at
+`scanner.c:2714`, build green, headless **67/0**. Reversible: tag `pre-cve-libyaml`.
+
+**Residual / teed-up:** a dedicated **ASan/UBSan fuzz of this exact URI-escape path** (and the rest
+of the YAML scanner) is folded into **finding 7** — a heap-overflow guard is best validated under a
+sanitizer, not a plain XCTest that may not deterministically crash. The other 7 pods are clean as of
+this sweep; re-run the sweep when any pod version changes.
 
 ### 9. `xcodebuild analyze` not yet CI-blocking (OPEN, LOW)
 
@@ -188,7 +211,8 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
 - **Hardened 2026-06-30 (plist cluster):** ATS now denies arbitrary loads + both dead exception
   domains removed (3); dangling AppleScript surface (`NSAppleScriptEnabled` + `OSAScriptingDefinition`)
   removed (4); Hardened Runtime enabled on the app target (5, App Sandbox deferred).
-- **Open / medium:** unfuzzed C parsers (7), un-swept dependencies (8); App Sandbox not adopted (5).
+- **Swept 2026-06-30:** dependency CVE sweep (8) done — LibYAML 0.1.4 CVE-2014-2525 patched (post_install hook); other 7 pods clean.
+- **Open / medium:** unfuzzed C parsers (7); App Sandbox not adopted (5).
 - **Closed / accepted:** Sparkle gone (2); local transports are allowlist-guarded (6, accepted local
   surface).
 
@@ -211,3 +235,9 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
   `x-macdown` scheme preserved). (5) `ENABLE_HARDENED_RUNTIME = YES` on both app build configs (App
   Sandbox deferred). Headless **67/0** + GUI launch/render eyeball (separate `open -n` instance, did NOT
   disturb a running Debug instance holding Jason's unsaved doc). Reversible: tag `pre-phase4-plist-hardening`.
+- **2026-06-30** — **Dependency CVE sweep (finding 8) DONE.** All 8 pods enumerated vs known CVEs.
+  One real reachable vuln: **LibYAML 0.1.4 / CVE-2014-2525** (heap overflow in
+  `yaml_parser_scan_uri_escapes`, reachable via `.md` YAML front-matter). The CocoaPods spec is frozen
+  at 0.1.4, so the official upstream `STRING_EXTEND` guard is applied via a `Podfile` `post_install`
+  hook (idempotent, CI-safe); canonical patch at `Scripts/patches/libyaml-cve-2014-2525.patch`. Build
+  green + headless 67/0. Reversible: tag `pre-cve-libyaml`. ASan fuzz of the path folded into finding 7.

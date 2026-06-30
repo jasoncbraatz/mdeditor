@@ -1,8 +1,8 @@
 # mdeditor MCP transport — `x-macdown://` control surface (Phase 3)
 
 > Status: **in progress.** Command-push AND read-back are now landed (code, headless-green);
-> the live cross-process smoke is GUI-session-only (see below) and the FastMCP wrapper is the
-> next bite. SSOT for the phase: `docs/MASTER-PLAN.md` §6.
+> the live cross-process smoke is GUI-session-only and is now VERIFIED GREEN (2026-06-30, all
+> 4 verbs); the FastMCP wrapper is the next bite. SSOT for the phase: `docs/MASTER-PLAN.md` §6.
 
 ## Why this transport
 Phase 3's rule (Jason, 2026-06-29) is that the MCP is a **piggyback** on the same control
@@ -51,7 +51,7 @@ The scheme is a **local** attack surface (anything that can open a URL can send 
 - Both validators are **pure functions** (no UI/document state) and are unit-tested headless
   in `MacDownTests/MPURLCommandTests.m`.
 
-## Read-back (landed 2026-06-30 — code green headless; live smoke = GUI-session only)
+## Read-back (landed + LIVE-VERIFIED 2026-06-30 — headless 51/0 AND GUI-session smoke green)
 `open <url>` is fire-and-forget: LaunchServices does not return the AppleEvent reply to the
 caller. So read-back sends the `GetURL` AppleEvent **directly** and reads `keyDirectObject`
 from the reply (the handler already populates it as JSON). This lives in `macdown-cmd`:

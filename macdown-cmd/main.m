@@ -8,6 +8,7 @@
 
 #import <sys/time.h>
 #import <AppKit/AppKit.h>
+#import <CoreServices/CoreServices.h>   // kInternetEventClass / kAEGetURL / keyDirectObject
 #import <GBCli/GBCli.h>
 #import "NSUserDefaults+Suite.h"
 #import "MPGlobals.h"
@@ -15,6 +16,11 @@
 
 
 const NSUInteger kMPPathEncoding = NSUTF8StringEncoding;
+
+// Default target for --control. NOTE: kMPApplicationBundleIdentifier in MPGlobals.h is
+// still the stale upstream id (com.uranusjr.macdown — Phase 6 footgun), so the read-back
+// transport hardcodes the real shipping id here instead of trusting that constant.
+static NSString * const kMPControlDefaultBundleID = @"com.jasoncbraatz.mdeditor";
 
 
 NSRunningApplication *MPRunningMacDownInstance()
@@ -71,6 +77,59 @@ NSData* MPPipedData() {
     }
 }
 
+/**
+ * Read-back transport (Phase 3): send an x-macdown:// control URL to the running app as a
+ * GetURL AppleEvent, WAIT for the reply, and print the handler's JSON status (carried in
+ * keyDirectObject) to stdout. Returns 0 on a captured reply, 1 otherwise.
+ *
+ * Why a direct AppleEvent rather than `open`: LaunchServices' open is fire-and-forget — it
+ * drops the AppleEvent reply, so the caller never sees the JSON. Sending GetURL ourselves
+ * with kAEWaitReply lets us read keyDirectObject back. (Sending Apple events to another app
+ * may require a one-time Automation/TCC grant; on denial macOS returns errAEEventNotPermitted
+ * (-1743), which we surface as JSON rather than crashing.)
+ */
+int MPSendControlURL(NSString *urlString, NSString *bundleID)
+{
+    NSData *bundleData = [bundleID dataUsingEncoding:NSUTF8StringEncoding];
+    NSAppleEventDescriptor *target =
+        [NSAppleEventDescriptor descriptorWithDescriptorType:typeApplicationBundleID
+                                                        data:bundleData];
+    NSAppleEventDescriptor *event =
+        [NSAppleEventDescriptor appleEventWithEventClass:kInternetEventClass
+                                                 eventID:kAEGetURL
+                                        targetDescriptor:target
+                                                returnID:kAutoGenerateReturnID
+                                           transactionID:kAnyTransactionID];
+    [event setParamDescriptor:[NSAppleEventDescriptor descriptorWithString:urlString]
+                   forKeyword:keyDirectObject];
+
+    NSError *sendError = nil;
+    NSAppleEventDescriptor *reply =
+        [event sendEventWithOptions:(NSAppleEventSendWaitForReply
+                                     | NSAppleEventSendCanInteract)
+                            timeout:15.0
+                              error:&sendError];
+
+    NSString *json = [[reply paramDescriptorForKeyword:keyDirectObject] stringValue];
+    if (json.length)
+    {
+        printf("%s\n", json.UTF8String);
+        return 0;
+    }
+
+    // No JSON reply — emit a structured error so the MCP/caller can parse a failure too.
+    NSString *reason = sendError.localizedDescription ?: @"no reply from app";
+    NSDictionary *err = @{@"ok": @NO,
+                          @"error": reason,
+                          @"bundle": (bundleID ?: @""),
+                          @"sentURL": (urlString ?: @"")};
+    NSData *data = [NSJSONSerialization dataWithJSONObject:err options:0 error:NULL];
+    NSString *out = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]
+                         : @"{\"ok\":false,\"error\":\"send failed\"}";
+    printf("%s\n", out.UTF8String);
+    return 1;
+}
+
 
 int main(int argc, const char * argv[])
 {
@@ -82,7 +141,15 @@ int main(int argc, const char * argv[])
             [argproc printHelp:YES];
         else if (argproc.printsVersion)
             [argproc printVersion:YES];
-        
+
+        // Read-back transport: --control short-circuits the usual fire-and-forget launch.
+        if (argproc.controlURL.length)
+        {
+            NSString *bundleID = argproc.bundleID.length ? argproc.bundleID
+                                                         : kMPControlDefaultBundleID;
+            return MPSendControlURL(argproc.controlURL, bundleID);
+        }
+
         NSData *dataFromPipe = MPPipedData();
         
         if (dataFromPipe) {
@@ -118,4 +185,3 @@ int main(int argc, const char * argv[])
     }
     return EXIT_SUCCESS;
 }
-

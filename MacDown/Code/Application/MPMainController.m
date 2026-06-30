@@ -130,8 +130,9 @@ NS_INLINE void treat()
 // invokeCommandID:sender:error:]) — one behaviour path, not two. Inputs are
 // allowlist-validated (see +validatedCommandID:/+validatedFileURLFromParam:) so the
 // scheme can't be turned into a fetch/SSRF or command-injection vector (Phase 4 tie-in).
-// The handler writes a JSON status into the AppleEvent reply; capturing that reply from
-// the CLI/MCP (read-back transport) is the next Phase 3 bite — `open` stays fire-and-forget.
+// Read-back verbs (get-text/render-html/export-html/status) return the front document's
+// state in the JSON reply; the CLI/MCP captures that reply by sending GetURL directly
+// (macdown-cmd --control, see docs/MCP-TRANSPORT.md). `open`/`command` stay one-shot.
 - (void)openUrlSchemeAppleEvent:(NSAppleEventDescriptor *)event
                  withReplyEvent:(NSAppleEventDescriptor *)reply
 {
@@ -188,17 +189,79 @@ NS_INLINE void treat()
             return [self mp_jsonStatusOK:NO verb:@"command"
                                    extra:@{@"error": @"unknown command id",
                                            @"id": (idParam ?: @"")}];
-        id current = [[NSDocumentController sharedDocumentController] currentDocument];
-        if (![current isKindOfClass:[MPDocument class]])
+        MPDocument *doc = [self mp_frontDocumentOrNil];
+        if (!doc)
             return [self mp_jsonStatusOK:NO verb:@"command"
                                    extra:@{@"error": @"no current document",
                                            @"id": commandID}];
         NSError *err = nil;
-        BOOL ok = [(MPDocument *)current invokeCommandID:commandID sender:self error:&err];
+        BOOL ok = [doc invokeCommandID:commandID sender:self error:&err];
         NSMutableDictionary *extra = [@{@"id": commandID} mutableCopy];
         if (!ok && err.localizedDescription)
             extra[@"error"] = err.localizedDescription;
         return [self mp_jsonStatusOK:ok verb:@"command" extra:extra];
+    }
+
+    // ---- Read-back verbs (Phase 3 read-back). These return the front document's state
+    // in the JSON reply; the CLI/MCP captures that reply by sending GetURL directly (see
+    // macdown-cmd --control + docs/MCP-TRANSPORT.md). All are read-only except export-html,
+    // which writes the rendered HTML to a validated .html/.htm path (Phase 4 write-surface).
+    else if ([verb isEqualToString:@"get-text"])
+    {
+        MPDocument *doc = [self mp_frontDocumentOrNil];
+        if (!doc)
+            return [self mp_jsonStatusOK:NO verb:@"get-text"
+                                   extra:@{@"error": @"no current document"}];
+        return [self mp_jsonStatusOK:YES verb:@"get-text"
+                               extra:@{@"text": (doc.markdown ?: @"")}];
+    }
+    else if ([verb isEqualToString:@"render-html"])
+    {
+        MPDocument *doc = [self mp_frontDocumentOrNil];
+        if (!doc)
+            return [self mp_jsonStatusOK:NO verb:@"render-html"
+                                   extra:@{@"error": @"no current document"}];
+        return [self mp_jsonStatusOK:YES verb:@"render-html"
+                               extra:@{@"html": (doc.html ?: @"")}];
+    }
+    else if ([verb isEqualToString:@"export-html"])
+    {
+        MPDocument *doc = [self mp_frontDocumentOrNil];
+        if (!doc)
+            return [self mp_jsonStatusOK:NO verb:@"export-html"
+                                   extra:@{@"error": @"no current document"}];
+        NSString *pathParam = [self valueForKey:@"path" fromQueryItems:items];
+        NSURL *out = [[self class] validatedExportPathFromParam:pathParam];
+        if (!out)
+            return [self mp_jsonStatusOK:NO verb:@"export-html"
+                                   extra:@{@"error": @"invalid or missing path "
+                                           @"(need file:// absolute .html/.htm)"}];
+        NSString *html = doc.html ?: @"";
+        NSError *werr = nil;
+        BOOL wrote = [html writeToURL:out atomically:YES
+                            encoding:NSUTF8StringEncoding error:&werr];
+        if (!wrote)
+            return [self mp_jsonStatusOK:NO verb:@"export-html"
+                                   extra:@{@"error": (werr.localizedDescription
+                                                      ?: @"write failed"),
+                                           @"path": out.path}];
+        NSUInteger bytes = [html lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        return [self mp_jsonStatusOK:YES verb:@"export-html"
+                               extra:@{@"path": out.path, @"bytes": @(bytes)}];
+    }
+    else if ([verb isEqualToString:@"status"])
+    {
+        MPDocument *doc = [self mp_frontDocumentOrNil];
+        NSMutableDictionary *extra = [@{
+            @"hasDocument": @(doc != nil),
+            @"commandCount": @([MPDocument availableCommandIDs].count),
+        } mutableCopy];
+        if (doc)
+        {
+            extra[@"previewReady"] = @(doc.isPreviewReady);
+            extra[@"textLength"] = @(doc.markdown.length);
+        }
+        return [self mp_jsonStatusOK:YES verb:@"status" extra:extra];
     }
 
     return [self mp_jsonStatusOK:NO verb:(verb ?: @"") extra:@{@"error": @"unknown verb"}];
@@ -236,6 +299,25 @@ NS_INLINE void treat()
     if (url.path.length == 0 || ![url.path hasPrefix:@"/"])
         return nil;     // require an absolute local path
     return url;
+}
+
++ (NSURL *)validatedExportPathFromParam:(NSString *)param
+{
+    NSURL *url = [self validatedFileURLFromParam:param];
+    if (!url)
+        return nil;
+    NSString *ext = url.pathExtension.lowercaseString;
+    if (![ext isEqualToString:@"html"] && ![ext isEqualToString:@"htm"])
+        return nil;     // writing: only .html/.htm, so a typo can't clobber a dotfile/binary
+    return url;
+}
+
+// Shared accessor: the front MPDocument, or nil if there is no markdown document up.
+// Used by the command + read-back verbs so they agree on what "the front document" is.
+- (MPDocument *)mp_frontDocumentOrNil
+{
+    id current = [[NSDocumentController sharedDocumentController] currentDocument];
+    return [current isKindOfClass:[MPDocument class]] ? (MPDocument *)current : nil;
 }
 
 - (NSString *)valueForKey:(NSString *)key fromQueryItems:(NSArray *)queryItems

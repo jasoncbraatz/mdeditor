@@ -239,6 +239,23 @@ blocks merges. Local fast loop too.
 > GUI smoke of `command` folds into the §11 handoff-#5 UI pass (fire `x-macdown://command?id=h1`
 > end-to-end).
 
+> **PROGRESS 2026-06-30 (co-pilot, read-back).** Landed the **read-back** half. The
+> handler gained four read verbs — `get-text` / `render-html` / `export-html?path=file://…`
+> / `status` — that return the front `MPDocument`'s state in the JSON reply (shared
+> `-mp_frontDocumentOrNil`; export gated by a new `+validatedExportPathFromParam:` that
+> requires an absolute `.html`/`.htm` `file://` path, Phase-4 write-surface guard). The
+> CLI `macdown-cmd` gained `--control <url> [--bundle <id>]`, which sends the `GetURL`
+> AppleEvent **directly** (`AESendMessage`, waits for the reply) and prints the JSON —
+> because `open` is fire-and-forget and drops the reply. Headless suite **51/0** (+2
+> export-path validator tests). **KEY FINDING:** the live cross-process smoke is
+> **GUI-session-only** — AppleEvents do NOT cross from a non-GUI ssh session into the GUI
+> app (send returns "no reply"; `launchctl asuser` → "Could not switch to audit session …
+> Operation not permitted"). So the live tick must come from Jason's login session:
+> repo'd **`Scripts/readback-smoke.sh`** launches the fresh Debug build *headless*
+> (`MPHeadlessTestMode=1`, no visible window), fires all four verbs, and quits. Live tick
+> pending that run. **Next bite:** the FastMCP wrapper (`mcp/`, fork-and-own) over
+> `--control`, then per-tool contract tests + Claude-app smoke.
+
 **Goal:** The Claude desktop app can open files, push/build documents, read rendered output, and run
 editing commands in mdeditor — through the **same** `MPAutomation` surface the harness uses.
 
@@ -264,7 +281,7 @@ commands; the MCP shells to those. Phase later to a richer AppleScript `sdef` on
    each MCP tool has a contract test that exercises the same `MPAutomation` path the harness covers.
 6. Reversibility: new files only; transport verbs are additive and behind explicit args.
 
-**Done when:** ◑ transport verbs (☑ `open`+`command` push via `x-macdown://`; ☐ read-back reply capture) · ☑ input validation · ☐ FastMCP server · ☐ Claude-app smoke · ◑ MCP contract tests (☑ validator contracts; ☐ per-tool).
+**Done when:** ◑ transport verbs (☑ `open`+`command` push; ☑ read-back verbs `get-text`/`render-html`/`export-html`/`status` + `--control` GetURL direct-send — code green headless; ☐ live in-session smoke via `Scripts/readback-smoke.sh`) · ☑ input validation (+`validatedExportPathFromParam:`) · ☐ FastMCP server · ☐ Claude-app smoke · ◑ MCP contract tests (☑ validator contracts; ☐ per-tool).
 
 ---
 
@@ -325,6 +342,11 @@ clean · ☐ analyze clean · ☐ CVE sweep · ☐ hardening review · ☐ `SECU
 - **gh footgun:** this working copy has remotes `origin`=jasoncbraatz/mdeditor AND `upstream`=MacDownApp/macdown, so bare `gh` resolves to UPSTREAM. Default is now pinned (`gh repo set-default jasoncbraatz/mdeditor`); if a future clone misbehaves, pass `-R jasoncbraatz/mdeditor`.
 - **xcodeproj gem footgun (adding a test file):** `Xcodeproj` 1.27.0 is bundled with CocoaPods — load it with `GEM_HOME=/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec /opt/homebrew/opt/ruby/bin/ruby` (the bare `/opt/homebrew/bin/ruby` lacks it). When adding a file with `group.new_reference('MacDownTests/Foo.m')`, the ref path is taken **literally**, so inside the `MacDownTests` group (which already has `path = MacDownTests`) it resolves to `MacDownTests/MacDownTests/Foo.m` (doubled, build-input-not-found). Fix: set `ref.path = 'Foo.m'` (basename, group-relative) like the siblings. Always assert `ref.real_path` matches a sibling before saving.
 - **MCP transport (Phase 3):** the `x-macdown://` scheme is the transport (existing `kAEGetURL` AppleEvent handler in `MPMainController`). Verbs: `open?url=file://…` and `command?id=<registry id>`. Inputs are allowlist-validated by pure class methods `+[MPMainController validatedCommandID:]` / `+[MPMainController validatedFileURLFromParam:]` (unit-tested in `MPURLCommandTests`). `open <url>` is fire-and-forget (LaunchServices drops the reply); read-back = send `GetURL` directly and read `keyDirectObject`. Full notes: `docs/MCP-TRANSPORT.md`.
+- **MCP read-back (Phase 3):** read verbs return the front doc's state in the JSON reply — `get-text` (=`MPDocument.markdown`=`editor.string`), `render-html` (=`MPDocument.html`=`renderer.currentHtml`), `export-html?path=file://…` (writes that html to a validated `.html`/`.htm` path via `+validatedExportPathFromParam:`), `status` (hasDocument/previewReady/commandCount/textLength). Capture path = CLI `macdown-cmd --control <url> [--bundle <id>]` → sends `GetURL` via `AESendMessage` (waits for reply) and prints `keyDirectObject`. `open` can't be used (fire-and-forget drops the reply).
+- **READ-BACK IS GUI-SESSION-ONLY (hard-won 2026-06-30):** you CANNOT drive the live AppleEvent read-back from a non-GUI ssh session — the send returns `"no reply from app"`, and `launchctl asuser $(id -u) …` fails with `Could not switch to audit session … Operation not permitted`. Run the live smoke from Jason's login-session Terminal: `bash Scripts/readback-smoke.sh` (launches the fresh Debug build with `MPHeadlessTestMode=1` so windows are invisible, fires all 4 verbs, quits). Headless XCTest still covers the validators + JSON plumbing; only the cross-process hop needs the GUI session.
+- **`open -b <bundleid>` / bundle-id AppleEvents route via LaunchServices to whatever Debug app is REGISTERED for that id — possibly a STALE DerivedData copy, not your `build/ddata` build.** (A live smoke fired at `com.jasoncbraatz.mdeditor-debug` opened an old `…autgfsmbucav…` DerivedData build, which lacks new verbs.) For a live smoke, launch the freshly-built binary DIRECTLY (kill stale first) so the event reaches your build. Extends the §11.2 bare-`open` footgun.
+- **GBCli (macdown-cmd) flags:** a value-taking option is `GBValueRequired` (NOT `GBOptionRequiresValue` — that identifier doesn't exist and fails to compile); `GBOptionNoValue` is the on/off switch. Read parsed values with `[settings objectForKey:@"<long>"]`.
+- **Headless-window flag is `getenv("MPHeadlessTestMode")` on `MPDocument.m` (~line 392), NOT XCTest-gated** — set it in the environment on a NORMAL launch and the app's document windows go transparent+off-screen. That's how `Scripts/readback-smoke.sh` runs a live smoke without taking over the desktop.
 - **Where the transport code lives (saves a hunt):** the CLI tool sources are in **`macdown-cmd/`** at the *repo root* (NOT under `MacDown/`): `main.m` + `MPArgumentProcessor.{h,m}`; pbxproj target name `macdown-cmd`, product `macdown`. The CLI is fire-and-forget: it stashes file paths / piped content into the prefs **suite** (`kMPApplicationSuiteName`, keys `filesToOpenOnNextLaunch`/`pipedContentFileToOpenOnNextLaunch`) then launches the app, which drains them in `-[MPMainController openPendingFiles]`/`openPendingPipedContent` (`applicationDidBecomeActive:`). The live-app control path is the `x-macdown://` **AppleEvent handler** `-[MPMainController openUrlSchemeAppleEvent:withReplyEvent:]` → `-mp_handleControlURLString:`. Editing commands + their stable ids live on **`MPDocument`** (`+availableCommandIDs`, `-invokeCommandID:sender:error:`).
 
 - Test harness: `docs/TEST-HARNESS.md` (every call), `docs/TEST-MATRIX.md` (coverage + pre-ship pipeline), `Scripts/test.sh` (headless runner). Headless mode auto-enables under XCTest — windows go transparent+off-screen (alpha 0 is the real guarantee; AppKit clamps off-screen position to a sliver). Flag is the PROCESS-ONLY env var `MPHeadlessTestMode` (never NSUserDefaults — that would hide the real app).
@@ -390,7 +412,9 @@ Between those, headless green is enough — keep dev cheap and flicker-free.
 | 2 | 2026-06-29 | Phase 1 GUI-routing: registry moved to app target on `MPDocument`; all 32 IBActions delegate to it; harness now a façade; link/image de-duped | NO (headless only, 44/44) | 2 |
 | 3 | 2026-06-29 | Phase 2 CI/CD: `.github/workflows/ci.yml` (macos-26 / Xcode 26, **fresh-clone**, Debug+Release matrix, coverage artifact, informational `analyze` job) + `Scripts/pre-push` hook & `install-git-hooks.sh` + retired `.travis.yml`. **CI confirmed GREEN** (run 28405776615 @ `eba20dc`) after fixing a Release-only link gap (`ENABLE_TESTABILITY=YES` + `ONLY_ACTIVE_ARCH=YES` on the test step — Release defaults testability NO). Local suite 44/0. | NO (headless only, 44/44) | 3 |
 | 4 | 2026-06-30 | Phase 3 transport: `x-macdown://command?id=<id>` verb routing to `invokeCommandID:` on the front doc + allowlist validators (`validatedCommandID:`/`validatedFileURLFromParam:`) + `open` file-URL guard + `MPURLCommandTests` (5) + `docs/MCP-TRANSPORT.md`. Suite 49/0. | NO (headless only, 49/0) | 4 |
+| 6 | 2026-06-30 | **Phase 3 read-back**: handler read verbs `get-text`/`render-html`/`export-html`/`status` (+ `-mp_frontDocumentOrNil`, `+validatedExportPathFromParam:`) + CLI `macdown-cmd --control <url> [--bundle]` sending `GetURL` directly (AESendMessage, waits for reply) + 2 export-path contract tests. **Headless suite 51/0.** Live cross-process smoke is GUI-session-only (ssh can't deliver AppleEvents; `launchctl asuser` denied) → repo'd `Scripts/readback-smoke.sh` (headless windows). Live tick pending Jason's paste of that script's output. | NO (headless only, 51/0; live smoke = GUI-session, pending) | 1 |
 | 5 | 2026-06-30 | **UI VERIFICATION PASS** (§11.2 / TEST-MATRIX §3) on a fresh **Debug** build (HEAD `8776396`): launch + **preview renders** ✓; toolbar parity (bold→`**selectme**`, H2→`## …`, ordered-list→`1. …`) ✓; Export **HTML** (9.2 KB, correct `<h1>/<h2>/<strong>/<ol>` reflecting the live edits) ✓; Export **PDF** (valid 1-page `%PDF-1.3`) ✓; **Phase 3 live smoke**: `open -b com.jasoncbraatz.mdeditor-debug "x-macdown://command?id=h1"` applied `# ` to the front-doc line ✓ (verified via **eye/computer-use**, not osascript). Also fixed a `ui-verify-due.sh` off-by-one (see §9 LUT). | **YES** | 0 |
 
 > Next session: add your row and increment the counter. At **5**, do the UI pass, set "UI-verified? = YES", and reset the counter to 0.
 > **Counter RESET to 0 on 2026-06-30 (handoff #5 = row 5 UI pass; launch/preview, toolbar parity, HTML+PDF export, and the `x-macdown://command?id=h1` live smoke all green). Next mandatory UI pass: when this counter next reads 4 (i.e. the 5th handoff from here), run §11.2 THAT session before handing off.**
+> **Update 2026-06-30 (handoff #6, read-back): counter = 1.** Read-back code is headless-green; its LIVE smoke is GUI-session-only (`Scripts/readback-smoke.sh`) and is tracked as a normal open verify item, separate from the §11.2 5-handoff full-UI cadence. Next mandatory full-UI pass still when the counter reaches 4.

@@ -11,6 +11,10 @@
 #import "MPGlobals.h"
 
 
+static NSString * const kMPControlKey = @"control";
+static NSString * const kMPBundleKey = @"bundle";
+
+
 @interface MPArgumentProcessor ()
 
 @property (strong) GBCommandLineParser *parser;
@@ -48,6 +52,14 @@
     [options registerOption:'h' long:kMPHelpKey
                 description:@"Print this help message and exit."
                       flags:GBOptionNoValue];
+    // Phase 3 read-back transport (see MPArgumentProcessor.h).
+    [options registerOption:0 long:kMPControlKey
+                description:@"Send an x-macdown:// control URL to the running app and "
+                            @"print the JSON reply to stdout (read-back transport)."
+                      flags:GBValueRequired];
+    [options registerOption:0 long:kMPBundleKey
+                description:@"Bundle id of the app to control (default release mdeditor)."
+                      flags:GBValueRequired];
     self.options = options;
 
     self.settings = [[GBSettings alloc] initWithName:@"command-line"
@@ -72,6 +84,16 @@
 - (BOOL)printsVersion
 {
     return [self.settings boolForKey:kMPVersionKey];
+}
+
+- (NSString *)controlURL
+{
+    return [self.settings objectForKey:kMPControlKey];
+}
+
+- (NSString *)bundleID
+{
+    return [self.settings objectForKey:kMPBundleKey];
 }
 
 - (NSArray *)arguments

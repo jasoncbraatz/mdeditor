@@ -1,7 +1,7 @@
 # mdeditor MCP transport — `x-macdown://` control surface (Phase 3)
 
-> Status: **in progress.** This session landed the *command-push* half (verbs that drive
-> the running app); the *read-back* half (capturing results on stdout for the MCP) is the
+> Status: **in progress.** Command-push AND read-back are now landed (code, headless-green);
+> the live cross-process smoke is GUI-session-only (see below) and the FastMCP wrapper is the
 > next bite. SSOT for the phase: `docs/MASTER-PLAN.md` §6.
 
 ## Why this transport
@@ -17,6 +17,10 @@ inventing a socket/XPC — lowest surgery, fully additive, reversible.
 |---|---|---|
 | `x-macdown://open?url=file:///abs/path.md` | Open a local file (existing behaviour, now input-validated) | `{"ok":true,"verb":"open","path":"…"}` |
 | `x-macdown://command?id=<id>` | Run an editing command on the **front** document | `{"ok":true,"verb":"command","id":"<id>"}` |
+| `x-macdown://get-text` | Return the front document's markdown (`editor.string`) | `{"ok":true,"verb":"get-text","text":"…"}` |
+| `x-macdown://render-html` | Return the front document's rendered HTML (`renderer.currentHtml`) | `{"ok":true,"verb":"render-html","html":"…"}` |
+| `x-macdown://export-html?path=file:///abs.html` | Write the rendered HTML to a validated `.html`/`.htm` path | `{"ok":true,"verb":"export-html","path":"…","bytes":N}` |
+| `x-macdown://status` | Liveness/inventory (no doc required) | `{"ok":true,"verb":"status","hasDocument":B,"previewReady":B,"commandCount":N,"textLength":N}` |
 
 `<id>` is any member of `+[MPDocument availableCommandIDs]` (e.g. `strong`, `emphasis`,
 `code`, `h1`–`h6`, `ul`, `ol`, `blockquote`, `link`, `image`, `indent`, …). The full,
@@ -39,17 +43,51 @@ The scheme is a **local** attack surface (anything that can open a URL can send 
   requires a `file://` URL with an absolute path; non-file schemes (`http`, `https`,
   `javascript:`, `ftp`, `x-macdown://`, …) are rejected, so the verb can't be turned into a
   fetch / SSRF / scheme-redirect vector.
+- **`export-html` is a WRITE surface.** `+[MPMainController validatedExportPathFromParam:]`
+  is stricter than the open guard: it requires a `file://` absolute path whose extension is
+  `.html`/`.htm` (case-insensitive). A typo can't clobber a dotfile/binary, and the verb can
+  only ever write the front doc's *rendered HTML* (not arbitrary content). Phase 4 may further
+  confine it to an allowed export dir.
 - Both validators are **pure functions** (no UI/document state) and are unit-tested headless
   in `MacDownTests/MPURLCommandTests.m`.
 
-## Read-back (next bite — NOT done yet)
+## Read-back (landed 2026-06-30 — code green headless; live smoke = GUI-session only)
 `open <url>` is fire-and-forget: LaunchServices does not return the AppleEvent reply to the
-caller. The handler already *populates* a JSON reply descriptor, so the read-back path is to
-send the `GetURL` AppleEvent **directly** (e.g. `NSAppleEventDescriptor`/`AESendMessage`
-from a tiny helper, or extend `macdown-cmd`) and read `keyDirectObject` from the reply.
-Then the FastMCP wrapper (`mcp/`, fork-and-own, per §6 step 3) shells to that and exposes
-`open_file` / `run_command` / (later) `get_text` / `render_html` / `export_html`.
+caller. So read-back sends the `GetURL` AppleEvent **directly** and reads `keyDirectObject`
+from the reply (the handler already populates it as JSON). This lives in `macdown-cmd`:
+
+```bash
+# from a Terminal in Jason's GUI login session (NOT over ssh — see the caveat below)
+macdown --control "x-macdown://get-text"           # default target: release mdeditor
+macdown --control "x-macdown://status" --bundle com.jasoncbraatz.mdeditor-debug
+```
+
+`--control <url>` builds a `kAEGetURL` event targeted by `typeApplicationBundleID`, sends it
+with `AESendMessage` (`NSAppleEventSendWaitForReply`), and prints the reply's
+`keyDirectObject` JSON to stdout. On no-reply/denial it prints a structured
+`{"ok":false,"error":…}` and exits non-zero.
+
+**Caveat — GUI-session only (hard-won 2026-06-30).** AppleEvents do NOT cross from a non-GUI
+ssh session into the GUI-session app: the send returns `"no reply from app"`, and bridging via
+`launchctl asuser $(id -u) …` is denied (`Could not switch to audit session … Operation not
+permitted`). So the live smoke must run inside Jason's login session. Convenience runner:
+
+```bash
+bash Scripts/readback-smoke.sh   # launches the fresh Debug build HEADLESS (MPHeadlessTestMode=1,
+                                 # no visible window), fires all 4 read verbs, prints JSON, quits.
+```
+
+Also note: a bundle-id-targeted event routes via LaunchServices to whatever Debug app is
+*registered* for that id — possibly a stale DerivedData copy, not your `build/ddata` build.
+`readback-smoke.sh` sidesteps this by killing stale instances and launching the fresh binary
+directly. The headless XCTest suite already covers the validators + JSON plumbing (51/0); only
+the cross-process hop needs the GUI session.
+
+**Next bite:** the FastMCP wrapper (`mcp/`, fork-and-own, per §6 step 3) shells to `--control`
+and exposes `open_file` / `run_command` / `get_text` / `render_html` / `export_html` / `status`.
 
 ## Files
-- `MacDown/Code/Application/MPMainController.{h,m}` — verbs + validators + JSON status.
+- `MacDown/Code/Application/MPMainController.{h,m}` — verbs (open/command + read-back) + validators + JSON status.
+- `macdown-cmd/{main.m,MPArgumentProcessor.{h,m}}` — `--control <url> [--bundle <id>]` GetURL direct-send / read-back.
 - `MacDownTests/MPURLCommandTests.m` — headless contract tests for the validators.
+- `Scripts/readback-smoke.sh` — GUI-session live smoke (headless windows) for the read verbs.

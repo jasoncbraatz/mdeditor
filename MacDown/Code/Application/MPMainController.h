@@ -39,4 +39,15 @@
  */
 + (NSURL *_Nullable)validatedFileURLFromParam:(NSString *_Nullable)param;
 
+/**
+ * Validate the @c path= parameter of `x-macdown://export-html?path=...`.
+ *
+ * Returns a writable @c file:// NSURL iff @c param is a local-file URL with an absolute
+ * path whose extension is @c html / @c htm (case-insensitive), otherwise @c nil. Stricter
+ * than @c +validatedFileURLFromParam: because export-html WRITES: requiring an .html/.htm
+ * suffix keeps a typo from clobbering a dotfile/binary, and the file-only guard keeps the
+ * verb off the network. Pure function; unit-tested headless. (Phase 4 write-surface note.)
+ */
++ (NSURL *_Nullable)validatedExportPathFromParam:(NSString *_Nullable)param;
+
 @end

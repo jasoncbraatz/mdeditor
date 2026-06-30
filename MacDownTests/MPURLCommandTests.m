@@ -75,4 +75,32 @@
     XCTAssertNil([MPMainController validatedFileURLFromParam:nil]);
 }
 
+
+#pragma mark - +validatedExportPathFromParam:
+
+- (void)testValidExportPathsAccepted
+{
+    for (NSString *param in @[ @"file:///tmp/out.html", @"file:///tmp/out.htm",
+                              @"file:///tmp/My%20Doc.HTML", @"file:///Users/x/a.b.html" ])
+    {
+        NSURL *u = [MPMainController validatedExportPathFromParam:param];
+        XCTAssertNotNil(u, @"export path '%@' should validate", param);
+        XCTAssertTrue(u.isFileURL);
+    }
+}
+
+- (void)testNonHTMLExtensionExportPathsRejected
+{
+    // Stricter than the open guard: writing requires an .html/.htm suffix so a typo can't
+    // clobber a dotfile/binary, and non-file schemes stay off the network.
+    NSArray<NSString *> *bad = @[ @"", @"file:///tmp/out.md", @"file:///tmp/out",
+                                  @"file:///tmp/.bashrc", @"file:///tmp/out.html.sh",
+                                  @"http://evil.example/x.html", @"javascript:alert(1)",
+                                  @"file://relative.html", @"out.html" ];
+    for (NSString *param in bad)
+        XCTAssertNil([MPMainController validatedExportPathFromParam:param],
+                     @"export path '%@' must be rejected", param);
+    XCTAssertNil([MPMainController validatedExportPathFromParam:nil]);
+}
+
 @end

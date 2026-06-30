@@ -8,7 +8,6 @@
 
 #import "MPMainController.h"
 #import <MASPreferences/MASPreferencesWindowController.h>
-#import <Sparkle/SUUpdater.h>
 #import "MPGlobals.h"
 #import "MPUtilities.h"
 #import "NSDocumentController+Document.h"
@@ -429,21 +428,6 @@ NS_INLINE void treat()
     [self openPendingPipedContent];
     [self openPendingFiles];
     treat();
-}
-
-
-#pragma mark - SUUpdaterDelegate
-
-- (NSString *)feedURLStringForUpdater:(SUUpdater *)updater
-{
-    // Auto-update DISABLED for this private fork. IMPORTANT: returning nil here made Sparkle's
-    // SUUpdater (which is instantiated by MainMenu.nib) abort during launch, and because it lives
-    // in the main nib that aborted the WHOLE main-nib load -> no menu bar, no window, no crash
-    // (the "no UI on launch" bug, root-caused + fixed 2026-06-29). Instead hand the updater an
-    // inert, OFFLINE feed: a local file:// URL that never advertises an update. The updater then
-    // initialises cleanly, never phones home (file scheme = no network), and can't clobber the
-    // fork. Belt+suspenders: SUEnableAutomaticChecks=NO keeps it from ever checking on its own.
-    return @"file:///dev/null";
 }
 
 

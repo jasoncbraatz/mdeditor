@@ -129,8 +129,6 @@
 	<string>NSApplication</string>
 	<key>OSAScriptingDefinition</key>
 	<string>MacDown.sdef</string>
-	<key>SUEnableAutomaticChecks</key>
-	<false/>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

@@ -295,6 +295,17 @@ commands; the MCP shells to those. Phase later to a richer AppleScript `sdef` on
 
 **Done when:** ☑ transport verbs (☑ `open`+`command` push; ☑ read-back verbs `get-text`/`render-html`/`export-html`/`status` + `--control` GetURL direct-send — headless 51/0 AND ☑ live in-session smoke GREEN 2026-06-30 via `Scripts/readback-smoke.sh`) · ☑ input validation (+`validatedExportPathFromParam:`) · ☑ FastMCP server (`mcp/`, 8 tools incl. `set_text`) · ☑ **Claude-app smoke (register + restart + live in-app round-trip GREEN from a Claude session, 2026-06-30, Bite A)** · ☑ MCP contract tests (validator + per-tool, 14/0) · ☑ live MCP round-trip GREEN (`mcp-live-smoke.sh`). **→ PHASE 3 COMPLETE.**
 
+> **Known cosmetic glitch (teed up, LOW pri — found 2026-06-30 during the §11.2 pass).** Applying an
+> inline-format command (e.g. bold via ⌘B / toolbar) **occasionally** leaves a one-frame ghost: the
+> old (larger, un-bolded) glyph run paints under the new `**word**` run on the edited line. It is
+> **intermittent** (did not reproduce on a 2nd attempt) and **self-heals** on the next redraw (scroll,
+> keystroke, relaunch). Text + preview are always correct — purely visual. Root cause: a redraw/
+> invalidation race at the seam between MacDown's *async* `HGMarkdownHighlighter` re-attributing the
+> range and AppKit's `NSTextView`/`NSLayoutManager` layout after a programmatic edit. **Fix when
+> convenient:** after `invokeCommandID:`/an inline edit, force a redraw of the edited line range
+> (`invalidateDisplayForCharacterRange:` or a synchronous re-highlight). Don't bank a hard negative
+> lesson (intermittent → dated-negative autophagy risk); re-test before trusting.
+
 ---
 
 ## 7. PHASE 4 — Security audit & attack-surface reduction

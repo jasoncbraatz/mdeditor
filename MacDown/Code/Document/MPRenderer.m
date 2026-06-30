@@ -93,6 +93,51 @@ NS_INLINE NSArray *MPPrismScriptURLsForLanguage(NSString *language)
     return urls;
 }
 
+// See MPRenderer.h. Regex-based body sanitizer (layer 1 of 3 for the preview
+// WebView; layers 2-3 are the template CSP and the willSendRequest remote-load
+// block). A regex sanitizer is intentionally conservative and is NOT a substitute
+// for process isolation -- see SECURITY-AUDIT.md finding 1 (WKWebView migration is
+// the scoped follow-up). Runs on the hoedown body only, so it never touches the
+// trusted bundled Prism/MathJax/mermaid scripts the template injects afterwards.
+NSString *MPSanitizeHTMLBody(NSString *htmlBody)
+{
+    if (!htmlBody.length)
+        return htmlBody;
+
+    NSRegularExpressionOptions opts =
+        NSRegularExpressionCaseInsensitive |
+        NSRegularExpressionDotMatchesLineSeparators;
+
+    NSMutableString *s = [htmlBody mutableCopy];
+
+    NSArray *rules = @[
+        // 1a. Paired active/embedding elements together with their content.
+        @[@"<script\\b[^>]*>.*?</script\\s*>", @""],
+        @[@"<(iframe|object|embed|applet)\\b[^>]*>.*?</\\1\\s*>", @""],
+        // 1b. Any stray/self-closing/unclosed opener or closer of the same set.
+        @[@"</?(script|iframe|object|embed|applet)\\b[^>]*>", @""],
+        // 2. Inline event-handler attributes (on...=), quoted or bare.
+        @[@"\\son[a-z0-9_]+\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)", @" "],
+        // 3. javascript:/vbscript: URIs in an attribute-value position.
+        @[@"(=\\s*[\"']?\\s*)(javascript|vbscript)(\\s*:)", @"$1unsafe$3"],
+        // 4. Dangerous data: URIs (allow only raster image types) in attr value pos.
+        @[@"(=\\s*[\"']?\\s*)data:(?!image/(?:png|jpe?g|gif|webp|bmp))", @"$1unsafe:"],
+    ];
+
+    for (NSArray *rule in rules)
+    {
+        NSRegularExpression *re =
+            [NSRegularExpression regularExpressionWithPattern:rule[0]
+                                                      options:opts error:NULL];
+        if (!re)
+            continue;
+        [re replaceMatchesInString:s options:0
+                             range:NSMakeRange(0, s.length)
+                      withTemplate:rule[1]];
+    }
+    return [s copy];
+}
+
 NS_INLINE NSString *MPHTMLFromMarkdown(
     NSString *text, int flags, BOOL smartypants, NSString *frontMatter,
     hoedown_renderer *htmlRenderer, hoedown_renderer *tocRenderer)
@@ -603,9 +648,9 @@ NS_INLINE void MPFreeHTMLRenderer(hoedown_renderer *htmlRenderer)
     hoedown_renderer *tocRenderer = NULL;
     if (hasTOC)
     tocRenderer = MPCreateHTMLTOCRenderer();
-    self.currentHtml = MPHTMLFromMarkdown(
+    self.currentHtml = MPSanitizeHTMLBody(MPHTMLFromMarkdown(
                                           markdown, extensions, smartypants, [frontMatter HTMLTable],
-                                          htmlRenderer, tocRenderer);
+                                          htmlRenderer, tocRenderer));
     if (tocRenderer)
     hoedown_html_renderer_free(tocRenderer);
     MPFreeHTMLRenderer(htmlRenderer);

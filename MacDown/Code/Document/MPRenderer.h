@@ -19,6 +19,15 @@ typedef NS_ENUM(NSUInteger, MPCodeBlockAccessoryType)
 };
 
 
+// Security (Phase 4, SECURITY-AUDIT finding 1a): strip active content from the
+// markdown-derived HTML *body* before it is wrapped in the trusted template and
+// loaded into the JS-enabled preview WebView. Removes <script>/<iframe>/<object>/
+// <embed>/<applet>, inline on*= event handlers, and neutralizes javascript:/
+// vbscript: and non-image data: URIs. The bundled Prism/MathJax/mermaid scripts are
+// added by the template AFTER this and are not affected. Pure function; unit-tested.
+FOUNDATION_EXPORT NSString *MPSanitizeHTMLBody(NSString *htmlBody);
+
+
 @interface MPRenderer : NSObject
 
 @property (nonatomic) int rendererFlags;

@@ -93,6 +93,7 @@
 		B19F00B19F00B19F00000003 /* MPTestHarness.m in Sources */ = {isa = PBXBuildFile; fileRef = B19F00B19F00B19F00000002 /* MPTestHarness.m */; };
 		B19F00B19F00B19F00000005 /* MPTestHarnessTests.m in Sources */ = {isa = PBXBuildFile; fileRef = B19F00B19F00B19F00000004 /* MPTestHarnessTests.m */; };
 		B5C5C1666A506FEA86435D25 /* libPods-macdown-cmd.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 263367245B2D78A42C2F19D7 /* libPods-macdown-cmd.a */; };
+		BBCFAD1345A14BE6A42648BB /* MPXSSHardeningTests.m in Sources */ = {isa = PBXBuildFile; fileRef = 670C69BC2CA16676FB41224A /* MPXSSHardeningTests.m */; };
 		EBFE3157737058F5A63699C8 /* libPods-MacDownTests.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 3C949FDE45493AE77DAD9BF4 /* libPods-MacDownTests.a */; };
 /* End PBXBuildFile section */
 
@@ -496,6 +497,7 @@
 		3D175F0F1974282400A5EFE8 /* WebView+WebViewPrivateHeaders.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "WebView+WebViewPrivateHeaders.h"; sourceTree = "<group>"; };
 		42F926DD38559C7CEDB6E42F /* libPods-MacDown.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-MacDown.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		4DBAA63927A60EB2150642B3 /* Pods-macdown-cmd.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-macdown-cmd.debug.xcconfig"; path = "Pods/Target Support Files/Pods-macdown-cmd/Pods-macdown-cmd.debug.xcconfig"; sourceTree = "<group>"; };
+		670C69BC2CA16676FB41224A /* MPXSSHardeningTests.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = MPXSSHardeningTests.m; sourceTree = "<group>"; };
 		7A8EA75FA95818275755F0B6 /* Pods-macdown-cmd.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-macdown-cmd.release.xcconfig"; path = "Pods/Target Support Files/Pods-macdown-cmd/Pods-macdown-cmd.release.xcconfig"; sourceTree = "<group>"; };
 		852D52391E260A6400BA7162 /* MPTerminalPreferencesViewController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = MPTerminalPreferencesViewController.h; sourceTree = "<group>"; };
 		852D523A1E260A6400BA7162 /* MPTerminalPreferencesViewController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = MPTerminalPreferencesViewController.m; sourceTree = "<group>"; };
@@ -858,6 +860,7 @@
 				1FFEB3261972DAB400B2254F /* MPHTMLTabularizeTests.m */,
 				1FCDCA371944F97800B1F966 /* Supporting Files */,
 				31C5ED3232F193194D0D8A97 /* MPURLCommandTests.m */,
+				670C69BC2CA16676FB41224A /* MPXSSHardeningTests.m */,
 			);
 			path = MacDownTests;
 			sourceTree = "<group>";
@@ -1276,6 +1279,7 @@
 				1F25E1C31A50F4F10029371D /* MPColorTests.m in Sources */,
 				1FFF301D1948A5320009AF24 /* MPStringLookupTests.m in Sources */,
 				9A0BE18F787A4003484BF8EC /* MPURLCommandTests.m in Sources */,
+				BBCFAD1345A14BE6A42648BB /* MPXSSHardeningTests.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

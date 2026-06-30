@@ -34,4 +34,10 @@
 - (BOOL)invokeCommandID:(NSString *)commandID sender:(id)sender
                   error:(NSError **)error;
 
+// Security (Phase 4, SECURITY-AUDIT finding 1c): allowlist predicate for preview
+// WebView subresource loads. YES only for local schemes (file/applewebdata/about/
+// data); every remote scheme is refused so a malicious .md cannot beacon out / SSRF.
+// Pure class method; unit-tested headlessly (mirrors the MPMainController validators).
++ (BOOL)mp_isAllowedPreviewResourceURL:(NSURL *)url;
+
 @end

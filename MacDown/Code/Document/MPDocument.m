@@ -865,6 +865,23 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
 
 #pragma mark - WebResourceLoadDelegate
 
++ (BOOL)mp_isAllowedPreviewResourceURL:(NSURL *)url
+{
+    // No scheme means a relative/inline reference resolved against the local base;
+    // allow it. Otherwise only local schemes pass; everything remote is refused.
+    NSString *scheme = url.scheme.lowercaseString;
+    if (!scheme.length)
+        return YES;
+
+    static NSSet *allowedSchemes = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        allowedSchemes = [NSSet setWithArray:@[@"file", @"applewebdata",
+                                               @"about", @"data"]];
+    });
+    return [allowedSchemes containsObject:scheme];
+}
+
 - (NSURLRequest *)webView:(WebView *)sender resource:(id)identifier willSendRequest:(NSURLRequest *)request redirectResponse:(NSURLResponse *)redirectResponse fromDataSource:(WebDataSource *)dataSource
 {
     
@@ -876,7 +893,13 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
         
         request = [NSURLRequest requestWithURL:[updatedComps URL]];
     }
-    
+
+    // Security (Phase 4, finding 1c): refuse remote subresource loads. The
+    // MathJax rewrite above already maps to a file: URL; anything still remote
+    // here (a malicious .md's <img>/<script>/CSS url()) is cancelled.
+    if (![MPDocument mp_isAllowedPreviewResourceURL:request.URL])
+        return nil;
+
     return request;
 }
 

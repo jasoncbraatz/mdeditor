@@ -28,7 +28,7 @@ Out of scope (single-user local tool): multi-user auth, server hardening, remote
 
 | # | Finding | Severity | Status |
 |---|---|---|---|
-| 1 | Preview WebView is a JS-enabled, in-process **XSS surface**; md→HTML is not sanitized | **HIGH** | OPEN (next bite) |
+| 1 | Preview WebView is a JS-enabled, in-process **XSS surface**; md→HTML is not sanitized | **HIGH** | MITIGATED 2026-06-30 (sanitize + CSP + remote-load block; WKWebView migration scoped) |
 | 2 | Sparkle auto-updater (dead update/network surface) | HIGH | DONE 2026-06-30 |
 | 3 | ATS disabled globally (`NSAllowsArbitraryLoads=true`) + dead insecure-HTTP exception | MEDIUM | OPEN |
 | 4 | AppleScript enabled (`NSAppleScriptEnabled`) + **dangling** `OSAScriptingDefinition` | LOW/INFO | OPEN |
@@ -64,6 +64,34 @@ Verified surface (as of HEAD 2026-06-30):
 loads in `willSendRequest:` (allow `file:`/the bundled assets + the explicit Prism CDN only, or
 pre-bundle Prism). (d) **Scope** a migration to `WKWebView` (process isolation, modern model) —
 larger, evaluate separately. See MASTER-PLAN §7 item 1.
+
+**SHIPPED 2026-06-30 (defense in depth, 3 layers).**
+- **(a) Body sanitizer** — `MPSanitizeHTMLBody()` (MPRenderer.m) runs on `currentHtml` (the
+  hoedown body) at the source, so preview, export, copy-HTML and the MCP `render-html` verb all
+  get sanitized output. Strips `<script>`/`<iframe>`/`<object>`/`<embed>`/`<applet>` (+ stray
+  openers/closers), inline `on*=` event handlers, and neutralizes `javascript:`/`vbscript:` and
+  non-image `data:` URIs (raster `data:image/{png,jpe?g,gif,webp,bmp}` preserved; `svg+xml`/
+  `text/html` neutralized). The trusted bundled Prism/MathJax/mermaid scripts are injected by the
+  template *after* this, so they are never touched.
+- **(b) CSP `<meta>`** — added to `Default.handlebars` `<head>`. Legacy `WebView` (WebKit1) DOES
+  enforce meta CSP (shared WebCore). `'unsafe-inline'`/`'unsafe-eval'` are kept (MathJax needs eval;
+  bundled assets are inline/file:), so the CSP's real job is **locking egress**: `script-src`/
+  `img-src`/`connect-src` list only local origins, and `object-src`/`frame-src`/`base-uri` are
+  `'none'`.
+- **(c) Remote-load block** — `+[MPDocument mp_isAllowedPreviewResourceURL:]` (allowlist:
+  file/applewebdata/about/data) is consulted in `-webView:resource:willSendRequest:`; any remote
+  subresource is cancelled (`return nil`). Kills beacon/SSRF and remote `<script>`/CSS `url()`.
+
+**Tests:** `MacDownTests/MPXSSHardeningTests.m` (16 headless: sanitizer strip/preserve + URL
+allowlist). Full suite **67/0** Debug. **Live eyeball** (computer-use, fresh Debug, `xss-eyeball.md`):
+legit md + Prism code block + table render; an inline `<script>` did NOT change the title and an
+`<img onerror>` did NOT mutate the body (neither executed); `<iframe>` stripped; a remote `<img>`
+did not load. Reversible: `git tag pre-phase4-xss`.
+
+**Residual risk (still open):** the sanitizer is a conservative REGEX pass, not a full HTML parser —
+entity-encoded scheme obfuscation (`java&#9;script:`) and exotic mutation-XSS could slip the body
+sanitizer, but (c) blocks any egress and the WebView stays in-process. The real isolation win is the
+**WKWebView migration** (process isolation + modern model) — SCOPED, not done; see MASTER-PLAN §7.
 
 ### 2. Sparkle removed (DONE 2026-06-30, commit 7627fef)
 
@@ -149,8 +177,8 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
 
 ## Residual risk summary (as of 2026-06-30)
 
-- **Open / highest:** WebView XSS (finding 1) — attacker-controllable `.md` runs JS in-process. This
-  is the next bite and the main reason Phase 4 exists.
+- **Mitigated 2026-06-30:** WebView XSS (finding 1) — sanitize + CSP + remote-load block shipped
+  (preview eyeball + 67/0). Remaining hardening = WKWebView process-isolation migration (scoped).
 - **Open / medium:** ATS wide-open (3), no sandbox/hardened-runtime (5), unfuzzed C parsers (7),
   un-swept dependencies (8).
 - **Closed / accepted:** Sparkle gone (2); local transports are allowlist-guarded (6, accepted local
@@ -162,3 +190,8 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
   `git tag pre-phase4`. Rationale: dead code + network/auto-update attack surface on a private fork.
 - **2026-06-30** — Audit started; WebView XSS (finding 1) chosen as the next dedicated bite; findings
   3/4/5/7/8/9 teed up here so a future Claude pays zero tokens to re-discover the surface.
+- **2026-06-30** — **WebView XSS (finding 1) MITIGATED.** Shipped body sanitizer + template CSP +
+  `willSendRequest:` remote-load block (see §1). 67/0 headless + live eyeball. Reversible via
+  `git tag pre-phase4-xss`. WKWebView migration deliberately deferred (scoped, larger). Decision on
+  the remote-image tradeoff: block remote subresources by default (anti-beacon) per the threat
+  model; a preference toggle to re-enable is teed up if Jason wants remote images in preview.

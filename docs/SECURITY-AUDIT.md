@@ -34,7 +34,7 @@ Out of scope (single-user local tool): multi-user auth, server hardening, remote
 | 4 | AppleScript enabled (`NSAppleScriptEnabled`) + **dangling** `OSAScriptingDefinition` | LOW/INFO | DONE 2026-06-30 (both keys removed) |
 | 5 | No App Sandbox, no Hardened Runtime (no entitlements file) | MEDIUM | PARTIAL 2026-06-30 (Hardened Runtime ON; App Sandbox deferred) |
 | 6 | Local transports (`x-macdown://` + CLI) — input validation | LOW | Reviewed (guarded) |
-| 7 | C parsers (hoedown 3.0.7, pmh_parser.c) not fuzzed under ASan | MEDIUM | OPEN |
+| 7 | C parsers (hoedown, pmh_parser, LibYAML) not fuzzed under ASan | MEDIUM | IN PROGRESS 2026-06-30 (fuzzed; 5 deep-nesting overflows found; hoedown fix IDENTIFIED+proven-safe but NOT landed — test race; pmh+LibYAML OPEN; CVE-2014-2525 ASan-validated) |
 | 8 | Dependency CVE sweep | MEDIUM | DONE 2026-06-30 (8 pods swept; LibYAML 0.1.4 CVE-2014-2525 patched) |
 | 9 | `xcodebuild analyze` not yet CI-blocking | LOW | OPEN |
 
@@ -157,13 +157,72 @@ No content is `eval`/`exec`'d. Residual risk (accepted for a single-user local t
 process** can drive the *running* app via the URL scheme / AppleEvent without authentication. This is
 inherent to a local automation surface; documented in `docs/MCP-TRANSPORT.md`.
 
-### 7. C parser fuzzing (OPEN, MEDIUM)
+### 7. C parser fuzzing (PARTIAL — hoedown FIXED; pmh + LibYAML OPEN)
 
-`hoedown 3.0.7` + generated `Dependency/peg-markdown-highlight/pmh_parser.c` parse fully
-attacker-controlled `.md`. **Not yet fuzzed under ASan/UBSan.** A malformed/adversarial document
-could trigger a crash or memory-safety UB. Tee up a dedicated bite: build the parsers with
-`-fsanitize=address,undefined`, run a corpus of adversarial markdown, fix/wrap any finding. (Ties to
-MASTER-PLAN Phase 5, which is already chasing an `-Os` UB.)
+`hoedown 3.0.7`, the generated `pmh_parser.c`, and LibYAML's scanner/loader parse
+fully attacker-controlled `.md`. First ASan/UBSan fuzz pass done 2026-06-30
+(harnesses + corpus repo-backed at `Scripts/fuzz/`, run via `Scripts/fuzz/build.sh`
++ `run.sh` — standalone clang, no app build). All findings were the same class:
+**unbounded recursion / stack-or-heap overflow on pathologically deep nesting**
+(no defect on the other 31 corpus inputs).
+
+**7a — hoedown body: FIX IDENTIFIED + PROVEN SAFE, NOT YET LANDED (blocked on a
+test race).** `deep_blockquote.md` (tens of thousands of `> `) → ASan
+**stack-overflow** in `parse_block` recursion (`document.c`). Root cause: hoedown
+ships a `max_nesting` parameter as its built-in guard, but `MPRenderer.m` passes
+`kMPRendererNestingLevel = SIZE_MAX`, disabling it — and `parseMarkdown:` runs on
+the `parseQueue` (`NSOperationQueue`, **512KB stack**), not the 8MB main stack.
+Measured overflow floor on a 512KB pthread at `-O0` ≈ **2000–3000** nesting
+levels. **Recommended fix:** cap `kMPRendererNestingLevel` at **1000** (2–3×
+margin below the floor; ~20–30× beyond any realistic document — even a deep
+quoted-email chain is ~50). The cap is **proven product-safe**: hoedown at 1000
+is clean over the entire corpus (no crash/hang) and its output for shallow docs
+is **byte-identical** to SIZE_MAX. `Scripts/fuzz/run.sh` asserts the 1000 cap
+holds on a 512KB stack every run.
+
+**Why it isn't landed yet (the blocker — for the next session):** changing the
+global `kMPRendererNestingLevel` from `SIZE_MAX` to `1000` makes the headless
+suite **hang at `MPTestHarnessTests testCommand_blockquote`** (deterministic 3/3;
+baseline SIZE_MAX is 67/0, incl. a force-rebuild control). The hang is a
+**timing-sensitive race in the test harness's render-wait busy-loop**
+(`MPTestHarness openFileAtPath:` / the `parseAndRenderWithMaxDelay:` `while
+(rendererIsLoading)` spin that `dispatch_sync`s to main), NOT a product behavior
+change — for the test's content hoedown's output is identical at 1000 vs SIZE_MAX,
+and the cap is inert (guard only trips past depth 1000). The cap's tiny
+return-timing shift loses the race. **Next bite:** make the harness render-wait
+robust (spin the run loop / use an `XCTestExpectation` instead of a busy-wait that
+starves the main queue, or give it a deadline that actually fires), THEN land the
+cap (tag `pre-fuzz` is the undo point) and confirm 67/0. Tree left at SIZE_MAX so
+the gate stays green this session.
+
+**7b — pmh_parser (generated): OPEN.** `deep_brackets.md` → stack-overflow in the
+peg recursive descent (`yymatchChar`/`yy_Inline`); `deep_nested_links.md` →
+**heap-buffer-overflow** in `yySet` (`pmh_parser.c:1258`) — the leg value-stack
+pointer `G->val` is advanced by `yyPush` with **no grow/bounds guard**, so deep
+nesting writes past the `vals` allocation. Reachable via `HGMarkdownHighlighter`
+(syntax highlighting, editor thread). Fix needs a **fork-and-own** of the generated
+parser: grow/bound the val-stack (mirror how the thunk stack grows), or cap input
+nesting before `pmh_markdown_to_elements`. The heap overflow (7b-heap) is the
+higher-priority of the two (memory corruption, not just exhaustion).
+
+**7c — LibYAML loader: OPEN.** `deep_flow_seq.yaml` / `deep_flow_map.yaml` (tens of
+thousands of `[` / `{`) → stack-overflow in `yaml_parser_load_node` recursion
+(`loader.c`). 0.1.4 has no document-depth limit. Reachable via YAML front-matter
+(Jekyll-detect pref). Fix: add a depth cap via the `Podfile post_install` hook
+(same mechanism as the CVE patch), or bound front-matter size before parsing.
+
+**CVE-2014-2525 validated under ASan (the deferred proof from finding 8).**
+`Scripts/fuzz/build.sh --cve-control` builds LibYAML with the `STRING_EXTEND`
+guard removed. On `corpus/cve_2014_2525.yaml` (verbatim tag, 5000 `%41` escapes)
+the **unpatched** build aborts with an ASan **heap-buffer-overflow** in
+`yaml_parser_scan_tag_uri` (reached via `yaml_parser_load` — MacDown's exact
+front-matter path); the **patched** build is clean. So the post_install fix
+demonstrably closes the overflow.
+
+**Residual risk:** the open 7b/7c overflows require pathologically deep nesting
+(tens of thousands of unbalanced delimiters); impact is a **crash/DoS on open**
+of a malicious file (no RCE demonstrated; the 7b-heap `yySet` write warrants the
+fork-and-own fix regardless). Tracked as the next finding-7 bite.
 
 ### 8. Dependency CVE sweep (DONE 2026-06-30, MEDIUM)
 
@@ -212,7 +271,13 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
   domains removed (3); dangling AppleScript surface (`NSAppleScriptEnabled` + `OSAScriptingDefinition`)
   removed (4); Hardened Runtime enabled on the app target (5, App Sandbox deferred).
 - **Swept 2026-06-30:** dependency CVE sweep (8) done — LibYAML 0.1.4 CVE-2014-2525 patched (post_install hook); other 7 pods clean.
-- **Open / medium:** unfuzzed C parsers (7); App Sandbox not adopted (5).
+- **Fuzzed 2026-06-30 (7):** ASan/UBSan harnesses + corpus repo-backed (`Scripts/fuzz/`).
+  5 deep-nesting overflows found (all same class). **7a hoedown** body stack-overflow:
+  fix identified (cap nesting at 1000) + proven product-safe, **not yet landed** (a
+  test-harness render-wait race; tree left at SIZE_MAX to keep the gate green). **7b
+  pmh** stack+**heap** overflow (generated parser) and **7c LibYAML** loader
+  stack-overflow remain OPEN. CVE-2014-2525 fix independently ASan-validated.
+- **Open / medium:** App Sandbox not adopted (5); parser deep-nesting overflows (7a land + 7b/7c).
 - **Closed / accepted:** Sparkle gone (2); local transports are allowlist-guarded (6, accepted local
   surface).
 
@@ -241,3 +306,16 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
   at 0.1.4, so the official upstream `STRING_EXTEND` guard is applied via a `Podfile` `post_install`
   hook (idempotent, CI-safe); canonical patch at `Scripts/patches/libyaml-cve-2014-2525.patch`. Build
   green + headless 67/0. Reversible: tag `pre-cve-libyaml`. ASan fuzz of the path folded into finding 7.
+- **2026-06-30** — **Parser fuzz (finding 7) first pass.** Built ASan/UBSan harnesses
+  + adversarial corpus (repo-backed `Scripts/fuzz/`; standalone clang, no app build).
+  Found **5 defects, all the deep-nesting/unbounded-recursion class**: 7a hoedown
+  `parse_block` stack-overflow (SIZE_MAX defeats hoedown's `max_nesting` guard; the
+  parse runs on the 512KB `parseQueue` stack); 7b pmh `yymatchChar` stack-overflow +
+  `yySet` **heap**-overflow (leg val-stack, no grow-guard); 7c LibYAML
+  `yaml_parser_load_node` stack-overflow. **Independently ASan-validated the
+  CVE-2014-2525 fix** (`build.sh --cve-control`: unpatched heap-overflows on the PoC,
+  patched clean). **7a fix = cap `kMPRendererNestingLevel` at 1000** — proven
+  product-safe (clean over corpus; byte-identical output for shallow docs) but the
+  cap **deterministically hangs `testCommand_blockquote`** via a test-harness
+  render-wait race, so it is NOT landed (tree stays SIZE_MAX; gate green). Reversible:
+  tag `pre-fuzz`. Next bite: de-flake the harness render-wait, land the cap, then 7b/7c.

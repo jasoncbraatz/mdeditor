@@ -352,6 +352,22 @@ commands; the MCP shells to those. Phase later to a richer AppleScript `sdef` on
 > **Next bites** (SECURITY-AUDIT): finding 7 parser fuzz (hoedown + pmh + the LibYAML scanner under
 > ASan/UBSan), or finding 5 App Sandbox (bigger).
 
+> **PROGRESS 2026-06-30 (co-pilot, finding 7 — parser fuzz first pass).** Built ASan/UBSan
+> harnesses + adversarial corpus, repo-backed at `Scripts/fuzz/` (`build.sh`/`run.sh`,
+> standalone clang — no app build). Found **5 defects, all the deep-nesting / unbounded-
+> recursion class** (clean on the other 31 inputs): **7a** hoedown `parse_block`
+> stack-overflow, **7b** pmh `yymatchChar` stack-overflow + `yySet` **heap**-overflow,
+> **7c** LibYAML `yaml_parser_load_node` stack-overflow. Also **independently ASan-
+> validated the LibYAML CVE-2014-2525 fix** (guard-removed control heap-overflows on the
+> PoC; patched build clean). **7a root cause:** `kMPRendererNestingLevel = SIZE_MAX`
+> defeats hoedown's built-in `max_nesting` guard, and `parseMarkdown:` runs on the 512KB
+> `parseQueue` stack (overflow floor ~2000-3000 @-O0). **Fix = cap at 1000**, proven
+> product-safe (clean over corpus; byte-identical shallow output) — but it **hangs
+> `testCommand_blockquote`** via a test-harness render-wait race (NOT a product change),
+> so it is **NOT landed** (tree stays SIZE_MAX; headless stays 67/0). Tag `pre-fuzz`.
+> **Next bite:** de-flake the harness render-wait, land the cap, then 7b (fork-and-own the
+> generated pmh val-stack) + 7c (LibYAML depth cap via post_install). Detail: SECURITY-AUDIT #7.
+
 **Goal:** It's ours and auditable. Remove/lock down anything that's an attack surface. Bank a written
 audit. (Was "Priority 2" in the original brief — now a first-class phase.)
 
@@ -376,7 +392,7 @@ audit. (Was "Priority 2" in the original brief — now a first-class phase.)
    + `code-review` skills.
 
 **Done when:** ☑ WebView hardened (sanitize+CSP+remote-load block, 2026-06-30) · ☑ Sparkle removed (7627fef, 2026-06-30) · ☐ parser fuzz
-clean · ☐ analyze clean · ☑ CVE sweep (2026-06-30, LibYAML 0.1.4 CVE-2014-2525 patched) · ☐ hardening review · ☑ `SECURITY-AUDIT.md` banked (living doc, 9 findings, 2026-06-30).
+clean (☐ — 1st fuzz pass done 2026-06-30: 5 deep-nesting overflows; 7a fix identified+proven-safe, NOT landed yet (test race); 7b/7c open; harness at `Scripts/fuzz/`) · ☐ analyze clean · ☑ CVE sweep (2026-06-30, LibYAML 0.1.4 CVE-2014-2525 patched) · ☐ hardening review · ☑ `SECURITY-AUDIT.md` banked (living doc, 9 findings, 2026-06-30).
 
 ---
 
@@ -442,6 +458,29 @@ clean · ☐ analyze clean · ☑ CVE sweep (2026-06-30, LibYAML 0.1.4 CVE-2014-
 
 - **Pods are patched via a `Podfile` `post_install` hook (not by editing `Pods/`)** — `Pods/` is gitignored, so the SSOT for any dependency patch is the committed `Podfile` hook + a banked patch in `Scripts/patches/`. Current hooks: **LibYAML 0.1.4 CVE-2014-2525** (`STRING_EXTEND` guard in `yaml_parser_scan_uri_escapes`). The hook chmods the read-only pod source, is idempotent (skips if the fix marker `STRING_EXTEND(parser, *string)` is present), aborts loudly if the anchor `*(string->pointer++) = octet;` ever changes, and runs in CI too (CI does `pod install --repo-update`). To verify after `pod install`: `grep -n "CVE-2014-2525" Pods/LibYAML/src/scanner.c`. Reversible: tag `pre-cve-libyaml`.
 
+- **Parser fuzz tooling (finding 7, 2026-06-30):** `Scripts/fuzz/` — `build.sh` (ASan/UBSan
+  harnesses for hoedown / pmh / LibYAML; `--cve-control` also builds the guard-removed LibYAML
+  to prove CVE-2014-2525), `run.sh` (corpus + run; non-zero only on a NEW defect; `KNOWN_OPEN[]`
+  lists accepted 7a/7b/7c), `generate_corpus.py`, `hoedown_thread.c` (renders on a 512KB pthread
+  to find the real overflow threshold). Standalone clang — **no Xcode/app build needed**.
+  `build/` + `corpus/` are gitignored.
+- **hoedown renders on the `parseQueue` (NSOperationQueue) = 512KB stack, NOT main's 8MB**
+  (`MPRenderer parseAndRenderWithMaxDelay:` → `parseMarkdown:`). So a deeply-nested `.md`
+  stack-overflows at ~2000-3000 levels (-O0) — `kMPRendererNestingLevel = SIZE_MAX` disables
+  hoedown's built-in `max_nesting` guard (`document.c` parse_block/parse_inline: `work_bufs
+  size > max_nesting → return`). Recommended fix = cap at 1000 (proven safe), see finding 7a.
+- **FOOTGUN — capping `kMPRendererNestingLevel` (SIZE_MAX→1000) HANGS the headless suite at
+  `MPTestHarnessTests testCommand_blockquote`** (deterministic 3/3; baseline + force-rebuild
+  control = 67/0). It is a **timing race in the harness render-wait** (the `while
+  (rendererIsLoading)` busy-spin in `parseAndRenderWithMaxDelay:` + `MPTestHarness
+  openFileAtPath:`), NOT a product change: hoedown output is byte-identical at 1000 vs SIZE_MAX
+  for shallow docs and the cap is inert below depth 1000. To land the cap you must FIRST de-flake
+  that render-wait (run-loop spin / XCTestExpectation instead of a main-queue-starving busy-wait).
+- **zsh footgun (fuzz builds over ssh):** darwin's login shell is zsh, which does NOT word-split
+  unquoted `$VAR` — putting compiler flags in a var and passing `$SAN` makes ONE arg
+  (`unsupported argument ...`). Inline the flags, or use a bash array (`SAN=(...)`; `"${SAN[@]}"`),
+  or `${=SAN}`. `Scripts/fuzz/build.sh` uses a bash array.
+
 ## 10. How to take a bite (every session)
 1. `git pull --ff-only` (this repo + claude-blackbook). Read this file top-to-bottom.
    - Then run `Scripts/ui-verify-due.sh` — if it shouts (counter ≥ 5), the §11.2 human UI pass is mandatory THIS session.
@@ -498,6 +537,8 @@ Between those, headless green is enough — keep dev cheap and flicker-free.
 | 11 | 2026-06-30 | **Phase 4 item 1 — WebView XSS hardening (SECURITY-AUDIT finding 1).** 3 layers: (a) body sanitizer `MPSanitizeHTMLBody()` (MPRenderer.m) on `currentHtml` — strips `<script>/<iframe>/<object>/<embed>`, inline `on*=`, neutralizes `javascript:`/`vbscript:` + non-image `data:` (covers preview+export+copy+MCP); (b) strict **CSP** `<meta>` in `Default.handlebars` (egress locked local; `'unsafe-inline/eval'` kept for bundled Prism/MathJax); (c) **remote-load block** `+[MPDocument mp_isAllowedPreviewResourceURL:]` in `willSendRequest:` (cancels non-local subresources — anti-beacon/SSRF). +16 tests (`MPXSSHardeningTests`), headless **67/0** Debug. **Live eyeball** (computer-use, fresh Debug @ `pre-phase4-xss`+patch): `<script>` did NOT change title, `<img onerror>` did NOT mutate body (neither executed), iframe stripped, remote img blocked; legit md + Prism code block + table render. WKWebView migration SCOPED (not done). Tag `pre-phase4-xss`. | XSS render eyeball: YES; §11.2 full-UI: NO (not due) | 2 |
 | 12 | 2026-06-30 | **Phase 4 plist/hardening cluster — SECURITY-AUDIT findings 3+4+5.** (3) ATS: `NSAllowsArbitraryLoads`→`false` + entire `NSExceptionDomains` removed (`cdnjs.cloudflare.com` + dead `uranusjr.com`) — safe: all preview subresources bundled, MathJax CDN URL rewritten to bundled file: in `willSendRequest:` before any net load, no other network API. (4) Removed `NSAppleScriptEnabled` + dangling `OSAScriptingDefinition` (→ absent `MacDown.sdef`); `x-macdown` scheme preserved. (5) `ENABLE_HARDENED_RUNTIME = YES` on both app configs (App Sandbox deferred). `plutil -lint` OK on both plist+pbxproj; built bundle's embedded Info.plist verified. Headless **67/0**. **GUI launch eyeball** (separate `open -n` fresh Debug instance — did NOT disturb the running instance holding Jason's unsaved doc): app launches with new plist, preview renders (bold/italic/Prism), `<script>` stripped + `<img onerror>` did not fire. Tag `pre-phase4-plist-hardening`. | plist launch eyeball: YES; §11.2 full-UI: NO (not due) | 3 |
 | 13 | 2026-06-30 | **Phase 4 finding 8 — dependency CVE sweep** + **§11.2 full-UI pass**. (a) Swept all 8 pods vs known CVEs (table in SECURITY-AUDIT §8); found & fixed **LibYAML 0.1.4 CVE-2014-2525** (heap overflow in `yaml_parser_scan_uri_escapes`, reachable via `.md` YAML front-matter `NSString+Lookup -> YAMLSerialization -> LibYAML`) — official upstream `STRING_EXTEND` guard applied via a `Podfile` `post_install` hook (idempotent, chmods read-only source, CI-safe); canonical patch `Scripts/patches/libyaml-cve-2014-2525.patch`; other 7 pods clean; build green, headless **67/0**, pushed **`3cd72af`** (pre-push suite green). Tag `pre-cve-libyaml`. (b) **§11.2 full UI pass** (computer-use, fresh **Debug** @ `3cd72af` post-patch, separate `open -n` instance so Jason's running instance + unsaved doc were untouched): launch + **preview renders** ✓; toolbar parity **bold** (`**ParityBold**`), **H2** (`## ` + heading render), **bullet list** (`* ` + bullet) ✓; **Export HTML** (9.9 KB — correct `<h1>/<strong>/<h2>/<li>/<table>`) ✓; **Export PDF** (valid `%PDF-1.3`, 1 page) ✓; no visual glitches. | §11.2 full-UI: **YES** (computer-use) | 0 |
+
+| 14 | 2026-06-30 | **Phase 4 finding 7 — parser fuzz (first pass).** Built repo-backed ASan/UBSan harnesses + adversarial corpus (`Scripts/fuzz/`: `build.sh`/`run.sh`/`generate_corpus.py`/`hoedown_thread.c` + README; standalone clang, no app build). Found **5 defects, all deep-nesting/unbounded-recursion** (clean on the other 31 inputs): **7a** hoedown `parse_block` stack-overflow, **7b** pmh `yymatchChar` stack-overflow + `yySet` **heap**-overflow, **7c** LibYAML `yaml_parser_load_node` stack-overflow. **Independently ASan-validated CVE-2014-2525** (`build.sh --cve-control`: unpatched heap-overflows on the PoC via `yaml_parser_load`; patched clean). **7a fix = cap `kMPRendererNestingLevel` at 1000** (root cause: SIZE_MAX defeats hoedown's guard; parse runs on the 512KB `parseQueue` stack, floor ~2000-3000 @-O0) — **proven product-safe** (clean over corpus; byte-identical shallow output) but it **deterministically hangs `testCommand_blockquote`** (test-harness render-wait race, NOT a product change; baseline+force-rebuild control = 67/0), so **NOT landed** — tree left at SIZE_MAX so the gate stays green. Docs updated (SECURITY-AUDIT #7 7a/7b/7c + decisions; MASTER-PLAN §7/§9). Tag `pre-fuzz`. | headless **67/0** (SIZE_MAX baseline+control); §11.2 full-UI: NO (not due) | 1 |
 
 > Next session: add your row and increment the counter. At **4** (read at session start), do the UI pass, set "UI-verified? = YES", and reset the counter to 0.
 > **✅ §11.2 FULL-UI PASS DONE 2026-06-30 (row 13, this session, via computer-use)** on a fresh **Debug** build @ `3cd72af` (post-CVE-patch): preview renders · toolbar parity bold/H2/bullet-list · Export HTML (correct `<h1>/<strong>/<h2>/<li>/<table>`) · Export PDF (valid 1-page `%PDF-1.3`). Pulled forward one session early (the script read "due NEXT session, counter=3") because rows 10/11/12 were three consecutive render/launch-touching security changes verified only by launch-eyeball — §11.2 explicitly encourages a full pass sooner after UI-touching work. **Counter RESET to 0.** Next mandatory full-UI pass: when the counter next reads 4 (5 handoffs from row 13).

@@ -7,9 +7,12 @@ set -euo pipefail
 PLAN="$(cd "$(dirname "$0")/.." && pwd)/docs/MASTER-PLAN.md"
 [ -f "$PLAN" ] || { echo "ui-verify-due: MASTER-PLAN.md not found at $PLAN" >&2; exit 2; }
 
-# Last data row of the ledger = last line matching "| <int> | <date> | ...". Take the final
-# numeric table cell as the counter.
-row="$(grep -E '^\| *[0-9]+ *\| *2[0-9]{3}-' "$PLAN" | tail -1)"
+# Latest data row = the row with the HIGHEST leading row-number — NOT the physically-last
+# line. Rows have been appended out of order before (1,2,3,4,8,7,6,5), which silently fooled
+# the old `tail -1` into reading the reset row (counter 0) and falsely reporting "not due".
+# Sort by the first numeric column and take the max so physical order can't break the gate.
+# (Hardened 2026-06-30 after the out-of-order ledger bug — see §9 LUT.)
+row="$(grep -E '^\| *[0-9]+ *\| *2[0-9]{3}-' "$PLAN" | sort -t'|' -k2 -n | tail -1)"
 counter="$(printf '%s' "$row" | awk -F'|' '{gsub(/ /,"",$(NF-1)); print $(NF-1)}')"
 
 case "$counter" in

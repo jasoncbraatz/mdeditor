@@ -54,16 +54,21 @@ Debug build. `MDEDITOR_TIMEOUT` (seconds, default 20) bounds each call.
 
 ## Verify
 
-- **Contract tests (anywhere, no app):** `/opt/homebrew/bin/python3 -m unittest mcp/test_mdeditor_mcp.py -v`
-  — mocks the CLI, asserts each tool's verb/URL mapping + JSON/error contract (13 tests).
+- **Contract tests (anywhere, no app):** `cd mcp && /opt/homebrew/bin/python3 -m unittest test_mdeditor_mcp -v`
+  — mocks the CLI, asserts each tool's verb/URL mapping + JSON/error contract (14 tests).
+  ⚠️ Run it from **inside** `mcp/` as a module name (`test_mdeditor_mcp`), NOT `python3 -m unittest mcp/test_mdeditor_mcp.py` from the repo root — the local `mcp/` dir shadows the pip `mcp` package and that form fails with `ModuleNotFoundError`.
 - **Live round-trip (GUI session):** `bash mcp/mcp-live-smoke.sh` — launches the fresh Debug build
   headless, calls each MCP tool function against it, prints the JSON, quits. (Same GUI-session
   caveat as `Scripts/readback-smoke.sh`.)
-- **Claude-app smoke (next bite):** register the block above, restart the Claude desktop app, then
-  ask: "make a document that says Hello and open it in mdeditor."
+- **Claude-app smoke (DONE 2026-06-30, Bite A):** register the block above, restart the Claude desktop
+  app, then ask: "make a document that says Hello and open it in mdeditor." ✅ Live round-trip GREEN from
+  a Claude session (status/new_document/get_text/render_html). **Gotcha:** the app the AppleEvent reaches
+  must be a CURRENT build — a stale `/Applications/mdeditor.app` (pre-read-back handler) opens the doc but
+  never writes a JSON reply → "no reply from app". Keep `/Applications` rebuilt from HEAD and don't let
+  stale `com.jasoncbraatz.mdeditor` copies linger in LaunchServices.
 
 ## Status
 
 ✅ Server + 8 tools, contract tests (14/0), schema-validated (8 tools list clean). Live MCP round-trip GREEN (mcp-live-smoke.sh, 2026-06-30).
-☐ Claude-app registration + live in-app smoke (GUI session / app restart).
+✅ Claude-app registration + live in-app smoke GREEN (registered in `claude_desktop_config.json`, restarted, round-trip from a Claude session — 2026-06-30, Bite A). **→ Phase 3 complete.**
 ✅ `set_text` (set-text verb carries text via temp file, not the URL).

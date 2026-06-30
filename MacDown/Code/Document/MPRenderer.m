@@ -29,7 +29,14 @@ static NSString * const kMPMathJaxCDN =
 static NSString * const kMPPrismScriptDirectory = @"Prism/components";
 static NSString * const kMPPrismThemeDirectory = @"Prism/themes";
 static NSString * const kMPPrismPluginDirectory = @"Prism/plugins";
-static size_t kMPRendererNestingLevel = SIZE_MAX;
+// Phase-4 finding 7a (2026-06-30): cap hoedown's max_nesting. SIZE_MAX disabled
+// hoedown's built-in recursion guard, and parseMarkdown: runs on the 512KB
+// parseQueue stack (overflow floor ~2000-3000 @-O0), so a deeply-nested .md
+// (e.g. tens of thousands of `> `) stack-overflowed. 1000 is a 2-3x margin below
+// the floor and ~20x beyond any realistic document (a deep quoted-email chain is
+// ~50). Proven product-safe: byte-identical shallow output vs SIZE_MAX; the guard
+// only trips past depth 1000. Reversible: tag pre-7a-land.
+static size_t kMPRendererNestingLevel = 1000;
 static int kMPRendererTOCLevel = 6;  // h1 to h6.
 
 
@@ -589,14 +596,30 @@ NS_INLINE void MPFreeHTMLRenderer(hoedown_renderer *htmlRenderer)
         // Parse in backgound
         [self parseMarkdown:markdown];
         
-        // Wait untils is renderer has finished loading OR until the maxDelay has passed
-        // This should result in overall faster update times
-        NSDate *start = [NSDate date];
+        // Wait until the renderer has finished loading, then render.
+        // DE-FLAKE 2026-06-30 (Phase-4 finding 7a): the prior loop condition
+        //   `rendererIsLoading || [start timeIntervalSinceNow] >= maxDelay`
+        // had a DEAD second term — elapsed-since-a-past-date is always negative
+        // and can never be >= a non-negative maxDelay — so maxDelay was already
+        // inert and this was an UNBOUNDED busy-spin that hammered the main queue
+        // with back-to-back dispatch_sync and never yielded. That could livelock
+        // the WebView load (the main thread can't advance the load while being
+        // saturated by our sync polls), a timing race that surfaced when the
+        // hoedown nesting cap shifted return timing. Fix preserves the EXACT
+        // termination (wait until rendererLoading is false; maxDelay stays inert,
+        // so output is byte-identical) but (a) yields between polls so the main
+        // thread can make progress, and (b) adds an absolute safety deadline so a
+        // pathological load can never hang the run. maxDelay is referenced to keep
+        // the signature meaningful and silence the unused-parameter warning.
+        (void)maxDelay;
+        NSDate *safetyDeadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
         __block BOOL rendererIsLoading = true;
-        while (rendererIsLoading || [start timeIntervalSinceNow] >= maxDelay) {
+        while (rendererIsLoading && [safetyDeadline timeIntervalSinceNow] > 0) {
             dispatch_sync(dispatch_get_main_queue(), ^{
                 rendererIsLoading = [self.dataSource rendererLoading];
             });
+            if (rendererIsLoading)
+                [NSThread sleepForTimeInterval:0.005];
         }
         
         // Render on main thread

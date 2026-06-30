@@ -368,6 +368,24 @@ commands; the MCP shells to those. Phase later to a richer AppleScript `sdef` on
 > **Next bite:** de-flake the harness render-wait, land the cap, then 7b (fork-and-own the
 > generated pmh val-stack) + 7c (LibYAML depth cap via post_install). Detail: SECURITY-AUDIT #7.
 
+> **PROGRESS 2026-06-30 (co-pilot, finding 7a — nesting cap LANDED + render-wait de-flake).**
+> Capped `kMPRendererNestingLevel` SIZE_MAX→**1000** (`MPRenderer.m`), closing the
+> `deep_blockquote` `parse_block` stack-overflow on the 512KB `parseQueue` stack
+> (`hoedown_thread deep_blockquote 1000` rc 0; unguarded SIZE_MAX rc 138). Output below
+> depth 1000 is byte-identical. The prior handoff's blocker — "cap deterministically hangs
+> `testCommand_blockquote` via a render-wait race" — was **misdiagnosed**: a `sample` of the
+> wedge showed XCTest failure-**symbolication blocking in `open()`** (DebugSymbols/Spotlight)
+> after an issue is recorded, triggered by main-thread starvation from a busy-spin in
+> `parseAndRenderWithMaxDelay:` (a dead `|| [start timeIntervalSinceNow] >= maxDelay` term).
+> De-flaked that loop (yield + 5s safety deadline; termination unchanged) → **7/7 clean**
+> full-suite runs at cap=1000; `testCommand_blockquote` also passes in isolation (0.22s).
+> `Scripts/fuzz/run.sh` now runs the main hoedown loop at the product cap (`MDFUZZ_NESTING=1000`),
+> drops `deep_blockquote` from KNOWN_OPEN, and adds a positive control → **PASS** (4 known-open
+> 7b/7c, 0 new). Headless **67/0**. Tags `pre-7a-deflake`/`pre-7a-land`. **Next bites:** 7b
+> (pmh fork-and-own: grow/bound the leg val-stack — the `yySet` heap-overflow is higher priority),
+> 7c (LibYAML depth cap via `post_install`), finding 5 (App Sandbox), finding 9 (`analyze`
+> CI-blocking + wire `Scripts/fuzz/run.sh` in as a gate).
+
 **Goal:** It's ours and auditable. Remove/lock down anything that's an attack surface. Bank a written
 audit. (Was "Priority 2" in the original brief — now a first-class phase.)
 
@@ -461,21 +479,32 @@ clean (☐ — 1st fuzz pass done 2026-06-30: 5 deep-nesting overflows; 7a fix i
 - **Parser fuzz tooling (finding 7, 2026-06-30):** `Scripts/fuzz/` — `build.sh` (ASan/UBSan
   harnesses for hoedown / pmh / LibYAML; `--cve-control` also builds the guard-removed LibYAML
   to prove CVE-2014-2525), `run.sh` (corpus + run; non-zero only on a NEW defect; `KNOWN_OPEN[]`
-  lists accepted 7a/7b/7c), `generate_corpus.py`, `hoedown_thread.c` (renders on a 512KB pthread
+  lists accepted 7b/7c — **7a is FIXED**, the main hoedown loop runs at the product cap
+  `MDFUZZ_NESTING=1000` + a positive control that the unguarded SIZE_MAX still overflows), `generate_corpus.py`, `hoedown_thread.c` (renders on a 512KB pthread
   to find the real overflow threshold). Standalone clang — **no Xcode/app build needed**.
   `build/` + `corpus/` are gitignored.
 - **hoedown renders on the `parseQueue` (NSOperationQueue) = 512KB stack, NOT main's 8MB**
   (`MPRenderer parseAndRenderWithMaxDelay:` → `parseMarkdown:`). So a deeply-nested `.md`
   stack-overflows at ~2000-3000 levels (-O0) — `kMPRendererNestingLevel = SIZE_MAX` disables
   hoedown's built-in `max_nesting` guard (`document.c` parse_block/parse_inline: `work_bufs
-  size > max_nesting → return`). Recommended fix = cap at 1000 (proven safe), see finding 7a.
-- **FOOTGUN — capping `kMPRendererNestingLevel` (SIZE_MAX→1000) HANGS the headless suite at
-  `MPTestHarnessTests testCommand_blockquote`** (deterministic 3/3; baseline + force-rebuild
-  control = 67/0). It is a **timing race in the harness render-wait** (the `while
-  (rendererIsLoading)` busy-spin in `parseAndRenderWithMaxDelay:` + `MPTestHarness
-  openFileAtPath:`), NOT a product change: hoedown output is byte-identical at 1000 vs SIZE_MAX
-  for shallow docs and the cap is inert below depth 1000. To land the cap you must FIRST de-flake
-  that render-wait (run-loop spin / XCTestExpectation instead of a main-queue-starving busy-wait).
+  size > max_nesting → return`). **FIXED 2026-06-30: capped at 1000** in `MPRenderer.m` (finding 7a LANDED; byte-identical output below depth 1000).
+- **CORRECTED 2026-06-30 — the cap-hang was NOT a render-wait race (prior handoff misdiagnosis).**
+  Landing the cap (SIZE_MAX→1000) made the full headless suite intermittently wedge at
+  `MPTestHarnessTests testCommand_blockquote`. A `sample` of the wedge showed the real cause:
+  the main thread is in `+[MPTestHarness openFileAtPath:]`'s run-loop pump and XCTest is
+  recording an issue → `recordIssue:` → `preferredSourceCodeLocationForSourceCodeFrames:` →
+  `XCTSourceCodeFrame symbolInfoWithError:` → **`fopen`/`open$NOCANCEL` blocks forever**
+  (XCTest failure-**symbolication** wedging in `open()`, DebugSymbols/Spotlight). The cap is
+  inert at the test's depth-1 content (passes in ISOLATION at cap=1000 in 0.22s) — the cap only
+  shifts TIMING. The real trigger is main-thread starvation: `parseAndRenderWithMaxDelay:` had a
+  busy-spin whose timeout term `[start timeIntervalSinceNow] >= maxDelay` is DEAD (negative ≥
+  non-negative is always false), so it hammered the main queue with no yield. **FIX (landed):**
+  de-flake that loop — yield 5ms between polls + a 5s absolute safety deadline; termination
+  unchanged (wait until `rendererLoading` false) → output byte-identical. Result: **7/7 clean**
+  full-suite runs at cap=1000 (the lone wedge in testing coincided with me running `sample`
+  against the test proc = external starvation). **STANDING FOOTGUN:** never run the heavy fuzz
+  build / `sample` / `spindump` CONCURRENTLY with `xcodebuild test` — the extra load re-starves
+  the harness and can re-trip the XCTest symbolication-on-`open()` wedge. Run them serially.
 - **zsh footgun (fuzz builds over ssh):** darwin's login shell is zsh, which does NOT word-split
   unquoted `$VAR` — putting compiler flags in a var and passing `$SAN` makes ONE arg
   (`unsupported argument ...`). Inline the flags, or use a bash array (`SAN=(...)`; `"${SAN[@]}"`),
@@ -539,6 +568,7 @@ Between those, headless green is enough — keep dev cheap and flicker-free.
 | 13 | 2026-06-30 | **Phase 4 finding 8 — dependency CVE sweep** + **§11.2 full-UI pass**. (a) Swept all 8 pods vs known CVEs (table in SECURITY-AUDIT §8); found & fixed **LibYAML 0.1.4 CVE-2014-2525** (heap overflow in `yaml_parser_scan_uri_escapes`, reachable via `.md` YAML front-matter `NSString+Lookup -> YAMLSerialization -> LibYAML`) — official upstream `STRING_EXTEND` guard applied via a `Podfile` `post_install` hook (idempotent, chmods read-only source, CI-safe); canonical patch `Scripts/patches/libyaml-cve-2014-2525.patch`; other 7 pods clean; build green, headless **67/0**, pushed **`3cd72af`** (pre-push suite green). Tag `pre-cve-libyaml`. (b) **§11.2 full UI pass** (computer-use, fresh **Debug** @ `3cd72af` post-patch, separate `open -n` instance so Jason's running instance + unsaved doc were untouched): launch + **preview renders** ✓; toolbar parity **bold** (`**ParityBold**`), **H2** (`## ` + heading render), **bullet list** (`* ` + bullet) ✓; **Export HTML** (9.9 KB — correct `<h1>/<strong>/<h2>/<li>/<table>`) ✓; **Export PDF** (valid `%PDF-1.3`, 1 page) ✓; no visual glitches. | §11.2 full-UI: **YES** (computer-use) | 0 |
 
 | 14 | 2026-06-30 | **Phase 4 finding 7 — parser fuzz (first pass).** Built repo-backed ASan/UBSan harnesses + adversarial corpus (`Scripts/fuzz/`: `build.sh`/`run.sh`/`generate_corpus.py`/`hoedown_thread.c` + README; standalone clang, no app build). Found **5 defects, all deep-nesting/unbounded-recursion** (clean on the other 31 inputs): **7a** hoedown `parse_block` stack-overflow, **7b** pmh `yymatchChar` stack-overflow + `yySet` **heap**-overflow, **7c** LibYAML `yaml_parser_load_node` stack-overflow. **Independently ASan-validated CVE-2014-2525** (`build.sh --cve-control`: unpatched heap-overflows on the PoC via `yaml_parser_load`; patched clean). **7a fix = cap `kMPRendererNestingLevel` at 1000** (root cause: SIZE_MAX defeats hoedown's guard; parse runs on the 512KB `parseQueue` stack, floor ~2000-3000 @-O0) — **proven product-safe** (clean over corpus; byte-identical shallow output) but it **deterministically hangs `testCommand_blockquote`** (test-harness render-wait race, NOT a product change; baseline+force-rebuild control = 67/0), so **NOT landed** — tree left at SIZE_MAX so the gate stays green. Docs updated (SECURITY-AUDIT #7 7a/7b/7c + decisions; MASTER-PLAN §7/§9). Tag `pre-fuzz`. | headless **67/0** (SIZE_MAX baseline+control); §11.2 full-UI: NO (not due) | 1 |
+| 15 | 2026-06-30 | **Phase 4 finding 7a — hoedown nesting cap LANDED** (+ render-wait de-flake). Capped `kMPRendererNestingLevel` SIZE_MAX→**1000** (`MPRenderer.m`) — stops the `deep_blockquote` `parse_block` stack-overflow on the 512KB `parseQueue` stack; byte-identical output below depth 1000; `hoedown_thread deep_blockquote 1000` rc 0 vs unguarded SIZE_MAX rc 138 (bus error). **Corrected the prior handoff's misdiagnosis**: the cap-hang was NOT a render-wait race but XCTest failure-**symbolication wedging in `open()`** (DebugSymbols/Spotlight) once an issue is recorded, triggered by main-thread starvation from a busy-spin (dead `\|\| [start timeIntervalSinceNow] >= maxDelay` term) in `parseAndRenderWithMaxDelay:`. De-flaked it (yield 5ms + 5s safety deadline; termination unchanged → byte-identical) → **7/7 clean** full-suite runs at cap=1000 (lone wedge coincided with concurrent `sample`). `Scripts/fuzz/run.sh` updated (main hoedown loop at `MDFUZZ_NESTING=1000`, `deep_blockquote` out of KNOWN_OPEN, + positive control) → **PASS** (4 known-open 7b/7c, 0 new). Tags `pre-7a-deflake`/`pre-7a-land`. | headless **67/0** ×7 + fuzz run.sh PASS; §11.2 full-UI: NO (not due) | 2 |
 
 > Next session: add your row and increment the counter. At **4** (read at session start), do the UI pass, set "UI-verified? = YES", and reset the counter to 0.
 > **✅ §11.2 FULL-UI PASS DONE 2026-06-30 (row 13, this session, via computer-use)** on a fresh **Debug** build @ `3cd72af` (post-CVE-patch): preview renders · toolbar parity bold/H2/bullet-list · Export HTML (correct `<h1>/<strong>/<h2>/<li>/<table>`) · Export PDF (valid 1-page `%PDF-1.3`). Pulled forward one session early (the script read "due NEXT session, counter=3") because rows 10/11/12 were three consecutive render/launch-touching security changes verified only by launch-eyeball — §11.2 explicitly encourages a full pass sooner after UI-touching work. **Counter RESET to 0.** Next mandatory full-UI pass: when the counter next reads 4 (5 handoffs from row 13).

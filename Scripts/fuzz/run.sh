@@ -12,9 +12,10 @@ export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
 
 # Known-OPEN recursion-depth defects in vendored/generated parsers (finding 7b/7c).
 # Format: "harness:corpusfile". These are reported but do NOT fail the run until
-# their fix lands. The hoedown body path (7a) is FIXED (cap=1000) and is NOT here.
+# their fix lands. The hoedown body path (7a) is FIXED & LANDED (2026-06-30): cap
+# kMPRendererNestingLevel=1000 in MPRenderer.m. The main hoedown loop below runs at the
+# product config (MDFUZZ_NESTING=1000) — deep_blockquote is clean there — so 7a is NOT here.
 KNOWN_OPEN=(
-  "hoedown_fuzz:deep_blockquote.md"  # 7a stack-overflow parse_block (current HEAD SIZE_MAX); fix=cap 1000, proven safe, not yet landed (test race)
   "pmh_fuzz:deep_brackets.md"        # 7b stack-overflow yymatchChar
   "pmh_fuzz:deep_nested_links.md"    # 7b heap-overflow yySet (val-stack)
   "yaml_fuzz:deep_flow_seq.yaml"     # 7c stack-overflow yaml_parser_load_node
@@ -43,18 +44,26 @@ run() { # $1 harness-name $2 file
   rm -f "$err"
 }
 
-echo "===== hoedown (all ext, nesting=SIZE_MAX — current HEAD config) ====="
+echo "===== hoedown (all ext, nesting=1000 — PRODUCT config: finding-7a cap LANDED in MPRenderer.m) ====="
+export MDFUZZ_NESTING=1000
 for f in "$CORPUS"/*.md; do run hoedown_fuzz "$f"; done
+unset MDFUZZ_NESTING
 echo "===== pmh_parser (pmh_EXT_NONE) ====="
 for f in "$CORPUS"/*.md; do run pmh_fuzz "$f"; done
 echo "===== LibYAML patched (front-matter path) ====="
 for f in "$CORPUS"/*.yaml; do run yaml_fuzz "$f"; done
 
-echo "===== regression: hoedown cap=1000 survives on the 512KB parseQueue stack ====="
+echo "===== regression: finding-7a cap on the REAL 512KB parseQueue stack ====="
 if [ -x "$OUT/hoedown_thread" ]; then
+  # (a) The LANDED cap=1000 MUST survive deep_blockquote on the 512KB stack.
   "$OUT/hoedown_thread" "$CORPUS/deep_blockquote.md" 1000 >/dev/null 2>&1
-  if [ $? -eq 0 ]; then echo "  cap=1000 @512KB: OK (recommended finding-7a cap; not yet landed in MPRenderer — see SECURITY-AUDIT)";
-  else echo "  cap=1000 @512KB: FAILED — the chosen cap overflows; lower it!"; newfail=$((newfail+1)); fi
+  if [ $? -eq 0 ]; then echo "  cap=1000 @512KB: OK (finding-7a cap LANDED in MPRenderer.m kMPRendererNestingLevel)";
+  else echo "  cap=1000 @512KB: FAILED — the landed cap overflows the 512KB stack; lower it!"; newfail=$((newfail+1)); fi
+  # (b) POSITIVE CONTROL: the OLD unguarded SIZE_MAX MUST still overflow the 512KB stack. Proves the
+  #     harness genuinely reproduces 7a and the cap is load-bearing (guards against a silent false-green).
+  "$OUT/hoedown_thread" "$CORPUS/deep_blockquote.md" 18446744073709551615 >/dev/null 2>&1; rc=$?
+  if [ $rc -ge 128 ]; then echo "  SIZE_MAX @512KB: overflows as expected (rc=$rc) — control OK, the cap is load-bearing";
+  else echo "  SIZE_MAX @512KB: did NOT overflow (rc=$rc) — CONTROL BROKEN: harness no longer reproduces 7a!"; newfail=$((newfail+1)); fi
 fi
 
 echo "=================================================="

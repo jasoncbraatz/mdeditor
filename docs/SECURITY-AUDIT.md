@@ -34,7 +34,7 @@ Out of scope (single-user local tool): multi-user auth, server hardening, remote
 | 4 | AppleScript enabled (`NSAppleScriptEnabled`) + **dangling** `OSAScriptingDefinition` | LOW/INFO | DONE 2026-06-30 (both keys removed) |
 | 5 | No App Sandbox, no Hardened Runtime (no entitlements file) | MEDIUM | PARTIAL 2026-06-30 (Hardened Runtime ON; App Sandbox deferred) |
 | 6 | Local transports (`x-macdown://` + CLI) — input validation | LOW | Reviewed (guarded) |
-| 7 | C parsers (hoedown, pmh_parser, LibYAML) not fuzzed under ASan | MEDIUM | IN PROGRESS 2026-06-30 (fuzzed; 5 deep-nesting overflows found; hoedown fix IDENTIFIED+proven-safe but NOT landed — test race; pmh+LibYAML OPEN; CVE-2014-2525 ASan-validated) |
+| 7 | C parsers (hoedown, pmh_parser, LibYAML) not fuzzed under ASan | MEDIUM | IN PROGRESS 2026-06-30 (fuzzed; 5 deep-nesting overflows; **7a hoedown FIXED+LANDED** cap=1000 + render-wait de-flake — headless 67/0 ×7 + fuzz run.sh PASS; pmh(7b)+LibYAML(7c) OPEN; CVE-2014-2525 ASan-validated) |
 | 8 | Dependency CVE sweep | MEDIUM | DONE 2026-06-30 (8 pods swept; LibYAML 0.1.4 CVE-2014-2525 patched) |
 | 9 | `xcodebuild analyze` not yet CI-blocking | LOW | OPEN |
 
@@ -166,34 +166,46 @@ fully attacker-controlled `.md`. First ASan/UBSan fuzz pass done 2026-06-30
 **unbounded recursion / stack-or-heap overflow on pathologically deep nesting**
 (no defect on the other 31 corpus inputs).
 
-**7a — hoedown body: FIX IDENTIFIED + PROVEN SAFE, NOT YET LANDED (blocked on a
-test race).** `deep_blockquote.md` (tens of thousands of `> `) → ASan
-**stack-overflow** in `parse_block` recursion (`document.c`). Root cause: hoedown
-ships a `max_nesting` parameter as its built-in guard, but `MPRenderer.m` passes
-`kMPRendererNestingLevel = SIZE_MAX`, disabling it — and `parseMarkdown:` runs on
-the `parseQueue` (`NSOperationQueue`, **512KB stack**), not the 8MB main stack.
-Measured overflow floor on a 512KB pthread at `-O0` ≈ **2000–3000** nesting
-levels. **Recommended fix:** cap `kMPRendererNestingLevel` at **1000** (2–3×
-margin below the floor; ~20–30× beyond any realistic document — even a deep
-quoted-email chain is ~50). The cap is **proven product-safe**: hoedown at 1000
-is clean over the entire corpus (no crash/hang) and its output for shallow docs
-is **byte-identical** to SIZE_MAX. `Scripts/fuzz/run.sh` asserts the 1000 cap
-holds on a 512KB stack every run.
+**7a — hoedown body: FIXED & LANDED 2026-06-30.** `deep_blockquote.md` (tens of
+thousands of `> `) → ASan **stack-overflow** in `parse_block` recursion
+(`document.c`). Root cause: hoedown ships a `max_nesting` parameter as its
+built-in guard, but `MPRenderer.m` passed `kMPRendererNestingLevel = SIZE_MAX`,
+disabling it — and `parseMarkdown:` runs on the `parseQueue` (`NSOperationQueue`,
+**512KB stack**), not the 8MB main stack. Overflow floor on a 512KB pthread @-O0
+≈ **2000–3000** levels. **Fix (LANDED):** cap `kMPRendererNestingLevel` at
+**1000** (`MPRenderer.m`; 2–3× below the floor, ~20× beyond any realistic doc — a
+deep quoted-email chain is ~50). **Proof:** `hoedown_thread deep_blockquote 1000`
+on the real 512KB stack returns rc 0 while the unguarded `SIZE_MAX` control
+bus-errors (rc 138) — both asserted every `Scripts/fuzz/run.sh` (deep_blockquote
+removed from KNOWN_OPEN; the main hoedown loop now runs at the product cap
+`MDFUZZ_NESTING=1000`, clean over the whole corpus). Output below depth 1000 is
+**byte-identical** to SIZE_MAX. Reversible: tags `pre-7a-deflake`, `pre-7a-land`.
 
-**Why it isn't landed yet (the blocker — for the next session):** changing the
-global `kMPRendererNestingLevel` from `SIZE_MAX` to `1000` makes the headless
-suite **hang at `MPTestHarnessTests testCommand_blockquote`** (deterministic 3/3;
-baseline SIZE_MAX is 67/0, incl. a force-rebuild control). The hang is a
-**timing-sensitive race in the test harness's render-wait busy-loop**
-(`MPTestHarness openFileAtPath:` / the `parseAndRenderWithMaxDelay:` `while
-(rendererIsLoading)` spin that `dispatch_sync`s to main), NOT a product behavior
-change — for the test's content hoedown's output is identical at 1000 vs SIZE_MAX,
-and the cap is inert (guard only trips past depth 1000). The cap's tiny
-return-timing shift loses the race. **Next bite:** make the harness render-wait
-robust (spin the run loop / use an `XCTestExpectation` instead of a busy-wait that
-starves the main queue, or give it a deadline that actually fires), THEN land the
-cap (tag `pre-fuzz` is the undo point) and confirm 67/0. Tree left at SIZE_MAX so
-the gate stays green this session.
+**The "test hang" was MISDIAGNOSED in the prior handoff — corrected here.** The
+prior session reported that flipping the cap "deterministically hangs
+`testCommand_blockquote` via a render-wait timing race." Sampling the wedged
+process (2026-06-30) showed otherwise: the main thread is parked in
+`+[MPTestHarness openFileAtPath:]`'s run-loop pump while an XCTest **issue is
+being recorded** (`-[XCTestCase recordIssue:]` →
+`+[XCTSourceCodeContext preferredSourceCodeLocationForSourceCodeFrames:]` →
+`-[XCTSourceCodeFrame symbolInfoWithError:]` → `fopen` → `open$NOCANCEL`), and
+XCTest's failure **symbolication blocks indefinitely in `open()`** (DebugSymbols/
+Spotlight). So the "hang" = *an XCTest issue is recorded and its symbolication
+wedges* — NOT a product/render defect (the cap is inert below depth 1000 and the
+test's content is depth-1; the test passes in isolation at cap=1000 in 0.22 s).
+The trigger is main-thread **starvation**: `parseAndRenderWithMaxDelay:` had a
+busy-spin `while (rendererIsLoading || [start timeIntervalSinceNow] >= maxDelay)`
+whose second term is **dead** (elapsed-since-a-past-date is always negative, never
+≥ a non-negative `maxDelay`), so it hammered the main queue with back-to-back
+`dispatch_sync` and never yielded. **De-flake (LANDED):** keep the exact
+termination (wait until `rendererLoading` is false; `maxDelay` stays inert →
+byte-identical output) but yield 5 ms between polls and add a 5 s absolute safety
+deadline. This turned the handoff's "deterministic 3/3 hang" into **7/7 clean**
+full-suite runs at cap=1000 (the one wedge seen in testing coincided with running
+`sample`/`spindump` against the test process — externally re-starving the
+harness). NOTE the residual latent issue for the next session: XCTest's
+symbolication-on-`open()` can wedge under extreme concurrent load — never run the
+heavy fuzz build/`sample` concurrently with `xcodebuild test`.
 
 **7b — pmh_parser (generated): OPEN.** `deep_brackets.md` → stack-overflow in the
 peg recursive descent (`yymatchChar`/`yy_Inline`); `deep_nested_links.md` →
@@ -273,11 +285,11 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
 - **Swept 2026-06-30:** dependency CVE sweep (8) done — LibYAML 0.1.4 CVE-2014-2525 patched (post_install hook); other 7 pods clean.
 - **Fuzzed 2026-06-30 (7):** ASan/UBSan harnesses + corpus repo-backed (`Scripts/fuzz/`).
   5 deep-nesting overflows found (all same class). **7a hoedown** body stack-overflow:
-  fix identified (cap nesting at 1000) + proven product-safe, **not yet landed** (a
-  test-harness render-wait race; tree left at SIZE_MAX to keep the gate green). **7b
-  pmh** stack+**heap** overflow (generated parser) and **7c LibYAML** loader
-  stack-overflow remain OPEN. CVE-2014-2525 fix independently ASan-validated.
-- **Open / medium:** App Sandbox not adopted (5); parser deep-nesting overflows (7a land + 7b/7c).
+  **FIXED & LANDED** — cap `kMPRendererNestingLevel`=1000 + a render-wait de-flake so
+  the headless gate stays green (7/7 clean runs; fuzz `run.sh` PASS with a positive
+  control). **7b pmh** stack+**heap** overflow (generated parser) and **7c LibYAML**
+  loader stack-overflow remain OPEN. CVE-2014-2525 fix independently ASan-validated.
+- **Open / medium:** App Sandbox not adopted (5); parser deep-nesting overflows (**7b** pmh + **7c** LibYAML; **7a** hoedown LANDED).
 - **Closed / accepted:** Sparkle gone (2); local transports are allowlist-guarded (6, accepted local
   surface).
 
@@ -319,3 +331,18 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
   cap **deterministically hangs `testCommand_blockquote`** via a test-harness
   render-wait race, so it is NOT landed (tree stays SIZE_MAX; gate green). Reversible:
   tag `pre-fuzz`. Next bite: de-flake the harness render-wait, land the cap, then 7b/7c.
+- **2026-06-30** — **Finding 7a (hoedown deep-nesting) FIXED & LANDED.** Capped
+  `kMPRendererNestingLevel` SIZE_MAX→**1000** (`MPRenderer.m`) — stops the
+  `deep_blockquote` `parse_block` stack-overflow on the 512KB `parseQueue` stack;
+  byte-identical output below depth 1000. The prior handoff's blocker ("cap hangs
+  `testCommand_blockquote` via a render-wait race") was **misdiagnosed**: a sample
+  of the wedge showed XCTest's failure-**symbolication blocking in `open()`** after
+  an issue is recorded, triggered by main-thread starvation from a busy-spin in
+  `parseAndRenderWithMaxDelay:` (a dead `|| [start timeIntervalSinceNow] >= maxDelay`
+  term made it an unbounded no-yield spin). **De-flaked** that loop (yield + 5 s
+  safety deadline, termination unchanged) → **7/7 clean** full-suite runs at
+  cap=1000. `Scripts/fuzz/run.sh` updated: main hoedown loop runs at the product
+  cap (`MDFUZZ_NESTING=1000`), `deep_blockquote` removed from KNOWN_OPEN, + a
+  positive control asserting unguarded SIZE_MAX still overflows the 512KB stack.
+  run.sh **PASS** (4 known-open = 7b×2/7c×2, 0 new). Reversible: tags
+  `pre-7a-deflake`, `pre-7a-land`. Next: 7b pmh fork-and-own, 7c LibYAML depth cap.

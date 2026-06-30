@@ -1,8 +1,9 @@
 /* hoedown_harness.c — ASan/UBSan fuzz harness for hoedown 3.0.7
  * Mirrors MacDown's render config (all extensions; nesting = SIZE_MAX, matching
- * the CURRENT kMPRendererNestingLevel in MPRenderer.m at HEAD). The recommended
- * finding-7a fix is to cap this at 1000 (proven safe over the corpus; not yet
- * landed pending a test-harness render-wait race — see SECURITY-AUDIT #7a).
+ * the raw/unguarded parser). Finding-7a fix is LANDED (2026-06-30): the product
+ * caps kMPRendererNestingLevel=1000 in MPRenderer.m. run.sh drives this harness at
+ * MDFUZZ_NESTING=1000 to model that product config (deep_blockquote is clean there);
+ * the default below stays SIZE_MAX so the raw-parser hazard is still reproducible.
  * Reads a markdown file and renders
  * it to HTML, exactly the attacker-reachable path for a malicious .md body.
  *
@@ -36,7 +37,7 @@ int main(int argc, char **argv)
               HOEDOWN_EXT_MATH | HOEDOWN_EXT_NO_INTRA_EMPHASIS | HOEDOWN_EXT_SPACE_HEADERS |
               HOEDOWN_EXT_MATH_EXPLICIT;
 
-    size_t nesting = SIZE_MAX;  /* matches current HEAD kMPRendererNestingLevel (recommended fix: 1000, finding 7a) */
+    size_t nesting = SIZE_MAX;  /* raw/unguarded default; product caps at 1000 (finding 7a LANDED). Override via MDFUZZ_NESTING. */
     const char *nv = getenv("MDFUZZ_NESTING");
     if (nv && *nv) nesting = (size_t)strtoull(nv, NULL, 10);
 

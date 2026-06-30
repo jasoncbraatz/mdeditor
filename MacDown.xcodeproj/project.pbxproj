@@ -89,6 +89,7 @@
 		85E24E5C1E5019C00056E696 /* MPToolbarController.m in Sources */ = {isa = PBXBuildFile; fileRef = 85E24E5B1E5019C00056E696 /* MPToolbarController.m */; };
 		905EF1A9196164CA00FC3CE9 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 905EF1A8196164CA00FC3CE9 /* Foundation.framework */; };
 		905EF1B7196164F300FC3CE9 /* macdown in Copy Command Line Utility */ = {isa = PBXBuildFile; fileRef = 905EF1A7196164CA00FC3CE9 /* macdown */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		9A0BE18F787A4003484BF8EC /* MPURLCommandTests.m in Sources */ = {isa = PBXBuildFile; fileRef = 31C5ED3232F193194D0D8A97 /* MPURLCommandTests.m */; };
 		B19F00B19F00B19F00000003 /* MPTestHarness.m in Sources */ = {isa = PBXBuildFile; fileRef = B19F00B19F00B19F00000002 /* MPTestHarness.m */; };
 		B19F00B19F00B19F00000005 /* MPTestHarnessTests.m in Sources */ = {isa = PBXBuildFile; fileRef = B19F00B19F00B19F00000004 /* MPTestHarnessTests.m */; };
 		B5C5C1666A506FEA86435D25 /* libPods-macdown-cmd.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 263367245B2D78A42C2F19D7 /* libPods-macdown-cmd.a */; };
@@ -489,6 +490,7 @@
 		1FFF301C1948A5320009AF24 /* MPStringLookupTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = MPStringLookupTests.m; sourceTree = "<group>"; };
 		263367245B2D78A42C2F19D7 /* libPods-macdown-cmd.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-macdown-cmd.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3028039D1FD84EAB0055B0DA /* contribute.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = net.daringfireball.markdown; name = contribute.md; path = Resources/contribute.md; sourceTree = "<group>"; };
+		31C5ED3232F193194D0D8A97 /* MPURLCommandTests.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = MPURLCommandTests.m; path = MPURLCommandTests.m; sourceTree = "<group>"; };
 		39EFCAE04F60154F0C8C5469 /* Pods-MacDown.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MacDown.release.xcconfig"; path = "Pods/Target Support Files/Pods-MacDown/Pods-MacDown.release.xcconfig"; sourceTree = "<group>"; };
 		3C949FDE45493AE77DAD9BF4 /* libPods-MacDownTests.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-MacDownTests.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3D175F0F1974282400A5EFE8 /* WebView+WebViewPrivateHeaders.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "WebView+WebViewPrivateHeaders.h"; sourceTree = "<group>"; };
@@ -855,6 +857,7 @@
 				1FFEB31819729F7C00B2254F /* MPAssetTests.m */,
 				1FFEB3261972DAB400B2254F /* MPHTMLTabularizeTests.m */,
 				1FCDCA371944F97800B1F966 /* Supporting Files */,
+				31C5ED3232F193194D0D8A97 /* MPURLCommandTests.m */,
 			);
 			path = MacDownTests;
 			sourceTree = "<group>";
@@ -1291,6 +1294,7 @@
 				1FFEB3271972DAB400B2254F /* MPHTMLTabularizeTests.m in Sources */,
 				1F25E1C31A50F4F10029371D /* MPColorTests.m in Sources */,
 				1FFF301D1948A5320009AF24 /* MPStringLookupTests.m in Sources */,
+				9A0BE18F787A4003484BF8EC /* MPURLCommandTests.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1789,14 +1793,9 @@
 			baseConfigurationReference = 39EFCAE04F60154F0C8C5469 /* Pods-MacDown.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				// mdeditor fork: pin Release to -O0. The Xcode 26 -Os default exposes a latent
-				// undefined-behavior bug in the launch path that silently aborts main-nib (MainMenu)
-				// loading -> no menu bar, no window, no crash (the 'no UI on launch' bug, 2026-06-29).
-				// Debug (-O0) and old MacDown were never affected. Perf is irrelevant for this editor.
-				// TODO(follow-up): narrow the UB to the offending file/line and restore optimization.
-				GCC_OPTIMIZATION_LEVEL = 0;
 				CODE_SIGN_IDENTITY = "";
 				COMBINE_HIDPI_IMAGES = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "MacDown/Code/MacDown-Prefix.pch";
 				INFOPLIST_FILE = "MacDown/MacDown-Info.plist";

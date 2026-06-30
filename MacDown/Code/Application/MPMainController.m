@@ -123,58 +123,119 @@ NS_INLINE void treat()
           forEventClass:kInternetEventClass andEventID:kAEGetURL];
 }
 
-// Open a file from a browser with url of the form :
-// "x-macdown://open?url=file:///path/to/a/file&line=123&column=45"
+// x-macdown:// control surface (Phase 3 MCP transport). Two verbs today:
+//   open:    x-macdown://open?url=file:///path/to/a/file
+//   command: x-macdown://command?id=strong        (any +[MPDocument availableCommandIDs])
+// Both route through the SAME registry the test harness drives (-[MPDocument
+// invokeCommandID:sender:error:]) — one behaviour path, not two. Inputs are
+// allowlist-validated (see +validatedCommandID:/+validatedFileURLFromParam:) so the
+// scheme can't be turned into a fetch/SSRF or command-injection vector (Phase 4 tie-in).
+// The handler writes a JSON status into the AppleEvent reply; capturing that reply from
+// the CLI/MCP (read-back transport) is the next Phase 3 bite — `open` stays fire-and-forget.
 - (void)openUrlSchemeAppleEvent:(NSAppleEventDescriptor *)event
                  withReplyEvent:(NSAppleEventDescriptor *)reply
 {
-    NSString *urlString = [[event paramDescriptorForKeyword:keyDirectObject] stringValue];
-    if (!urlString) {
-        return;
+    NSString *urlString =
+        [[event paramDescriptorForKeyword:keyDirectObject] stringValue];
+    NSString *status = [self mp_handleControlURLString:urlString];
+    if (reply && reply.descriptorType != typeNull && status)
+    {
+        [reply setParamDescriptor:[NSAppleEventDescriptor descriptorWithString:status]
+                       forKeyword:keyDirectObject];
     }
+}
+
+// Parse + dispatch an x-macdown:// control URL. Returns a JSON status string. UI-touching
+// (opens documents / invokes commands), so it is exercised via the live GUI pass; the pure
+// validation it delegates to is unit-tested headless (MPURLCommandTests).
+- (NSString *)mp_handleControlURLString:(NSString *)urlString
+{
+    if (urlString.length == 0)
+        return [self mp_jsonStatusOK:NO verb:nil extra:@{@"error": @"empty url"}];
+
     NSURL *url = [[NSURL alloc] initWithString:urlString];
-    if (!url) {
-        return;
-    }
-    NSURLComponents *urlComponents = [NSURLComponents componentsWithURL:url
-                                                resolvingAgainstBaseURL:NO];
-    if (!urlComponents) {
-        return;
-    }
-    NSString *host = urlComponents.host;
-    if (!host || ![host isEqualToString:@"open"]) {
-        return;
-    }
-    NSArray *queryItems = urlComponents.queryItems;
-    if (!queryItems) {
-        return;
-    }
-    NSString *fileParam = [self valueForKey:@"url" fromQueryItems:queryItems];
-    if (!fileParam) {
-        return;
-    }
-    // FIXME: Could not figure out how to place the insertion point at a given
-    // line and column.
-    /* Unused */ NSString *lineParam = [self valueForKey:@"line"
-                                          fromQueryItems:queryItems];
-    /* Unused */ NSString *columnParam = [self valueForKey:@"column"
-                                            fromQueryItems:queryItems];
-    NSLog(@"%@:%@:%@", fileParam, lineParam, columnParam);
+    NSURLComponents *c =
+        url ? [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO] : nil;
+    if (!c)
+        return [self mp_jsonStatusOK:NO verb:nil extra:@{@"error": @"malformed url"}];
 
-    NSURL *target = [NSURL URLWithString:fileParam];
-    if (!target) {
-        return;
-    }
-    NSDocumentController *c = [NSDocumentController sharedDocumentController];
-    [c openDocumentWithContentsOfURL:target display:YES completionHandler:
-     ^(NSDocument *document, BOOL wasOpen, NSError *error) {
-         if (!document || wasOpen || error)
-             return;
-         NSRect frame = [NSScreen mainScreen].visibleFrame;
-         for (NSWindowController *wc in document.windowControllers)
-             [wc.window setFrame:frame display:YES];
-     }];
+    NSString *verb = c.host;                 // open | command
+    NSArray *items = c.queryItems ?: @[];
 
+    if ([verb isEqualToString:@"open"])
+    {
+        NSString *fileParam = [self valueForKey:@"url" fromQueryItems:items];
+        NSURL *target = [[self class] validatedFileURLFromParam:fileParam];
+        if (!target)
+            return [self mp_jsonStatusOK:NO verb:@"open"
+                                   extra:@{@"error": @"invalid or missing file url"}];
+        NSDocumentController *dc = [NSDocumentController sharedDocumentController];
+        [dc openDocumentWithContentsOfURL:target display:YES completionHandler:
+         ^(NSDocument *document, BOOL wasOpen, NSError *error) {
+             if (!document || wasOpen || error)
+                 return;
+             NSRect frame = [NSScreen mainScreen].visibleFrame;
+             for (NSWindowController *wc in document.windowControllers)
+                 [wc.window setFrame:frame display:YES];
+         }];
+        return [self mp_jsonStatusOK:YES verb:@"open" extra:@{@"path": target.path}];
+    }
+    else if ([verb isEqualToString:@"command"])
+    {
+        NSString *idParam = [self valueForKey:@"id" fromQueryItems:items];
+        NSString *commandID = [[self class] validatedCommandID:idParam];
+        if (!commandID)
+            return [self mp_jsonStatusOK:NO verb:@"command"
+                                   extra:@{@"error": @"unknown command id",
+                                           @"id": (idParam ?: @"")}];
+        id current = [[NSDocumentController sharedDocumentController] currentDocument];
+        if (![current isKindOfClass:[MPDocument class]])
+            return [self mp_jsonStatusOK:NO verb:@"command"
+                                   extra:@{@"error": @"no current document",
+                                           @"id": commandID}];
+        NSError *err = nil;
+        BOOL ok = [(MPDocument *)current invokeCommandID:commandID sender:self error:&err];
+        NSMutableDictionary *extra = [@{@"id": commandID} mutableCopy];
+        if (!ok && err.localizedDescription)
+            extra[@"error"] = err.localizedDescription;
+        return [self mp_jsonStatusOK:ok verb:@"command" extra:extra];
+    }
+
+    return [self mp_jsonStatusOK:NO verb:(verb ?: @"") extra:@{@"error": @"unknown verb"}];
+}
+
+- (NSString *)mp_jsonStatusOK:(BOOL)ok verb:(NSString *)verb extra:(NSDictionary *)extra
+{
+    NSMutableDictionary *d = [NSMutableDictionary dictionary];
+    d[@"ok"] = @(ok);
+    if (verb)
+        d[@"verb"] = verb;
+    [extra enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *stop) { d[k] = v; }];
+    NSData *json = [NSJSONSerialization dataWithJSONObject:d options:0 error:NULL];
+    return json ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding]
+                : @"{\"ok\":false,\"error\":\"json encode failed\"}";
+}
+
++ (NSString *)validatedCommandID:(NSString *)candidate
+{
+    if (![candidate isKindOfClass:[NSString class]] || candidate.length == 0)
+        return nil;
+    // Exact, case-sensitive allowlist membership — no trimming, no coercion.
+    if ([[MPDocument availableCommandIDs] containsObject:candidate])
+        return candidate;
+    return nil;
+}
+
++ (NSURL *)validatedFileURLFromParam:(NSString *)param
+{
+    if (![param isKindOfClass:[NSString class]] || param.length == 0)
+        return nil;
+    NSURL *url = [NSURL URLWithString:param];
+    if (!url || !url.isFileURL)
+        return nil;
+    if (url.path.length == 0 || ![url.path hasPrefix:@"/"])
+        return nil;     // require an absolute local path
+    return url;
 }
 
 - (NSString *)valueForKey:(NSString *)key fromQueryItems:(NSArray *)queryItems

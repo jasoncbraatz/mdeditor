@@ -325,6 +325,7 @@ clean · ☐ analyze clean · ☐ CVE sweep · ☐ hardening review · ☐ `SECU
 - **gh footgun:** this working copy has remotes `origin`=jasoncbraatz/mdeditor AND `upstream`=MacDownApp/macdown, so bare `gh` resolves to UPSTREAM. Default is now pinned (`gh repo set-default jasoncbraatz/mdeditor`); if a future clone misbehaves, pass `-R jasoncbraatz/mdeditor`.
 - **xcodeproj gem footgun (adding a test file):** `Xcodeproj` 1.27.0 is bundled with CocoaPods — load it with `GEM_HOME=/opt/homebrew/Cellar/cocoapods/1.16.2_2/libexec /opt/homebrew/opt/ruby/bin/ruby` (the bare `/opt/homebrew/bin/ruby` lacks it). When adding a file with `group.new_reference('MacDownTests/Foo.m')`, the ref path is taken **literally**, so inside the `MacDownTests` group (which already has `path = MacDownTests`) it resolves to `MacDownTests/MacDownTests/Foo.m` (doubled, build-input-not-found). Fix: set `ref.path = 'Foo.m'` (basename, group-relative) like the siblings. Always assert `ref.real_path` matches a sibling before saving.
 - **MCP transport (Phase 3):** the `x-macdown://` scheme is the transport (existing `kAEGetURL` AppleEvent handler in `MPMainController`). Verbs: `open?url=file://…` and `command?id=<registry id>`. Inputs are allowlist-validated by pure class methods `+[MPMainController validatedCommandID:]` / `+[MPMainController validatedFileURLFromParam:]` (unit-tested in `MPURLCommandTests`). `open <url>` is fire-and-forget (LaunchServices drops the reply); read-back = send `GetURL` directly and read `keyDirectObject`. Full notes: `docs/MCP-TRANSPORT.md`.
+- **Where the transport code lives (saves a hunt):** the CLI tool sources are in **`macdown-cmd/`** at the *repo root* (NOT under `MacDown/`): `main.m` + `MPArgumentProcessor.{h,m}`; pbxproj target name `macdown-cmd`, product `macdown`. The CLI is fire-and-forget: it stashes file paths / piped content into the prefs **suite** (`kMPApplicationSuiteName`, keys `filesToOpenOnNextLaunch`/`pipedContentFileToOpenOnNextLaunch`) then launches the app, which drains them in `-[MPMainController openPendingFiles]`/`openPendingPipedContent` (`applicationDidBecomeActive:`). The live-app control path is the `x-macdown://` **AppleEvent handler** `-[MPMainController openUrlSchemeAppleEvent:withReplyEvent:]` → `-mp_handleControlURLString:`. Editing commands + their stable ids live on **`MPDocument`** (`+availableCommandIDs`, `-invokeCommandID:sender:error:`).
 
 - Test harness: `docs/TEST-HARNESS.md` (every call), `docs/TEST-MATRIX.md` (coverage + pre-ship pipeline), `Scripts/test.sh` (headless runner). Headless mode auto-enables under XCTest — windows go transparent+off-screen (alpha 0 is the real guarantee; AppKit clamps off-screen position to a sliver). Flag is the PROCESS-ONLY env var `MPHeadlessTestMode` (never NSUserDefaults — that would hide the real app).
 - Build/install/verify recipe: see `mdeditor-SESSION-2026-06-29-launchfix.md` §"Build/install recipe".
@@ -344,6 +345,7 @@ clean · ☐ analyze clean · ☐ CVE sweep · ☐ hardening review · ☐ `SECU
 
 ## 10. How to take a bite (every session)
 1. `git pull --ff-only` (this repo + claude-blackbook). Read this file top-to-bottom.
+   - Then run `Scripts/ui-verify-due.sh` — if it shouts (counter ≥ 5), the §11.2 human UI pass is mandatory THIS session.
 2. `lessons.py search "<the bite> mdeditor" --scope global,strike-zone` + `lessons.py doctrine`.
 3. Pick the lowest unchecked box that's unblocked (phases are ordered by dependency: 0→1→2→3→4, with
    5/6/7 parallelizable). `git tag pre-<bite>` before editing.
@@ -378,6 +380,7 @@ verification** (`docs/TEST-MATRIX.md` §3) against a fresh Debug build, and reco
 Between those, headless green is enough — keep dev cheap and flicker-free.
 
 - Rule: if **handoffs-since-last-UI-verification ≥ 5**, do the UI pass THIS session before handing off.
+- Force-function: `Scripts/ui-verify-due.sh` parses this ledger's counter and exits non-zero (LOUD) when the pass is due — run it at session start and before composing a handoff so the cadence can't be silently missed.
 - Doing it sooner after any UI-touching change is encouraged.
 
 ### 11.3 Ledger (append one row per session; reset the counter on a UI pass)

@@ -178,7 +178,7 @@ _WR = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False,
 
 
 @mcp.tool(name="mdeditor_status", annotations={"title": "mdeditor status", **_RO})
-async def mdeditor_status(params: NoInput) -> str:
+async def mdeditor_status(params: Optional[NoInput] = None) -> str:
     """Liveness/inventory of the running mdeditor: whether a document is front, whether its
     preview is ready, the command-registry size, and the front document's text length. Works even
     when no document is open (hasDocument=false). Use this first to confirm the app is reachable."""
@@ -189,7 +189,7 @@ async def mdeditor_status(params: NoInput) -> str:
 
 
 @mcp.tool(name="mdeditor_get_text", annotations={"title": "Get front document markdown", **_RO})
-async def mdeditor_get_text(params: NoInput) -> str:
+async def mdeditor_get_text(params: Optional[NoInput] = None) -> str:
     """Return the markdown text of the front mdeditor document (its editor contents)."""
     try:
         return _result(await _control(_url("get-text")))
@@ -198,7 +198,7 @@ async def mdeditor_get_text(params: NoInput) -> str:
 
 
 @mcp.tool(name="mdeditor_render_html", annotations={"title": "Get rendered HTML", **_RO})
-async def mdeditor_render_html(params: NoInput) -> str:
+async def mdeditor_render_html(params: Optional[NoInput] = None) -> str:
     """Return the rendered HTML of the front mdeditor document (the live preview's HTML body)."""
     try:
         return _result(await _control(_url("render-html")))

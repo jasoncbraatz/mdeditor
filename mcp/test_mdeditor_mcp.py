@@ -167,5 +167,22 @@ class ErrorHandlingTests(unittest.TestCase):
         self.assertEqual(d["error"], "unknown command id")
 
 
+
+class ZeroInputErgonomicsTests(unittest.TestCase):
+    """The no-input tools must NOT require a `params` arg in their MCP inputSchema (footgun fix
+    2026-06-30): calling status/get_text/render_html with no arguments used to error
+    'Field required'. Assert at the SCHEMA level (what the Claude app actually validates against),
+    not just the Python signature."""
+
+    def test_no_input_tools_have_optional_params(self):
+        tools = {t.name: t for t in asyncio.run(M.mcp.list_tools())}
+        for name in ("mdeditor_status", "mdeditor_get_text", "mdeditor_render_html"):
+            self.assertIn(name, tools, f"{name} not registered")
+            schema = tools[name].inputSchema or {}
+            required = schema.get("required", []) or []
+            self.assertNotIn(
+                "params", required,
+                f"{name}: 'params' must be OPTIONAL for a zero-input tool (got required={required})")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

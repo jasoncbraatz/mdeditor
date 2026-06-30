@@ -315,7 +315,7 @@ clean · ☐ analyze clean · ☐ CVE sweep · ☐ hardening review · ☐ `SECU
 - **PHASE 7 — Packaging & "make default" UX.** Proper signing → notarization; a tiny installer/script
   that registers mdeditor and sets it as the default `.md` handler cleanly (see done-this-session
   note for the `duti` recipe and the LS-pollution caveat). ☐
-- **Housekeeping (Jason to triage):** untracked `MacDown/Resources/Styles/GitHub-2020.css` (**0 bytes — looks like an accidental `touch`; safe scratch**) and `REDO-PROMPT.md` (historical session log, now SUPERSEDED by this plan) in the working copy — keeper or scratch? ☐
+- **Housekeeping (Jason to triage):** untracked `MacDown/Resources/Styles/GitHub-2020.css` (**0 bytes — looks like an accidental `touch`; safe scratch**) `REDO-PROMPT.md` (historical session log, SUPERSEDED by this plan) is now **tracked & archived** at `docs/archive/REDO-PROMPT-2026-06-29-launchfix.md` (2026-06-30, Jason's call — repo-back it). Remaining: the 0-byte `GitHub-2020.css` — keeper or scratch? ☐
 
 ---
 

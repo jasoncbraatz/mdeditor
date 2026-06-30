@@ -30,9 +30,9 @@ Out of scope (single-user local tool): multi-user auth, server hardening, remote
 |---|---|---|---|
 | 1 | Preview WebView is a JS-enabled, in-process **XSS surface**; md→HTML is not sanitized | **HIGH** | MITIGATED 2026-06-30 (sanitize + CSP + remote-load block; WKWebView migration scoped) |
 | 2 | Sparkle auto-updater (dead update/network surface) | HIGH | DONE 2026-06-30 |
-| 3 | ATS disabled globally (`NSAllowsArbitraryLoads=true`) + dead insecure-HTTP exception | MEDIUM | OPEN |
-| 4 | AppleScript enabled (`NSAppleScriptEnabled`) + **dangling** `OSAScriptingDefinition` | LOW/INFO | OPEN |
-| 5 | No App Sandbox, no Hardened Runtime (no entitlements file) | MEDIUM | OPEN |
+| 3 | ATS disabled globally (`NSAllowsArbitraryLoads=true`) + dead insecure-HTTP exception | MEDIUM | DONE 2026-06-30 (ATS→false, both exceptions removed) |
+| 4 | AppleScript enabled (`NSAppleScriptEnabled`) + **dangling** `OSAScriptingDefinition` | LOW/INFO | DONE 2026-06-30 (both keys removed) |
+| 5 | No App Sandbox, no Hardened Runtime (no entitlements file) | MEDIUM | PARTIAL 2026-06-30 (Hardened Runtime ON; App Sandbox deferred) |
 | 6 | Local transports (`x-macdown://` + CLI) — input validation | LOW | Reviewed (guarded) |
 | 7 | C parsers (hoedown 3.0.7, pmh_parser.c) not fuzzed under ASan | MEDIUM | OPEN |
 | 8 | Dependency CVE sweep | MEDIUM | OPEN |
@@ -117,6 +117,8 @@ gone). The installed `/Applications/mdeditor.app` is still the pre-removal build
 `NSAllowsArbitraryLoads`** (or flip to `false` with a tight allowlist) and drop the `uranusjr.com`
 exception. Tighten as the remote-load policy lands.
 
+**SHIPPED 2026-06-30.** `NSAllowsArbitraryLoads` → `false`; the entire `NSExceptionDomains` dict (both `cdnjs.cloudflare.com` and the dead `uranusjr.com`) **removed**. Safe because every preview subresource is bundled: Prism (`MacDown/Resources/Prism`) and MathJax (`MacDown/Resources/MathJax`). The MathJax `<script>` points at `kMPMathJaxCDN` but `-[MPDocument webView:resource:willSendRequest:]` (MPDocument.m ~888) **rewrites any `MathJax.js` request to the bundled file: URL before any network load**, and finding 1's allowlist cancels any other remote subresource — so no remote egress ever occurs and no ATS exception is load-bearing. No other network API in the app (`grep` for `NSURLSession`/`NSURLConnection` = none outside vendored Prism). Verified: built app's embedded `Info.plist` has `NSAppTransportSecurity = { NSAllowsArbitraryLoads = false }`; GUI launch + preview render eyeball GREEN.
+
 ### 4. AppleScript enabled + dangling scripting definition (OPEN, LOW/INFO)
 
 `NSAppleScriptEnabled = true` **and** `OSAScriptingDefinition = MacDown.sdef`, but **no `MacDown.sdef`
@@ -127,7 +129,9 @@ automation surface and a documentation/reality mismatch.
 
 **Decision needed:** either (a) **remove** `NSAppleScriptEnabled` + `OSAScriptingDefinition` (no
 scripting — matches §2 and shrinks the surface), or (b) deliberately ship a **locked-down** `.sdef`
-if scripting is wanted. Recommend (a) unless Jason wants AppleScript. (Tee up; not done this bite.)
+if scripting is wanted. Recommend (a) unless Jason wants AppleScript.
+
+**SHIPPED 2026-06-30 — option (a).** Both `NSAppleScriptEnabled` and `OSAScriptingDefinition` keys **removed** from `MacDown-Info.plist` (matches MASTER-PLAN §2 "no scripting"). The `x-macdown` URL scheme transport (the real automation surface) is **preserved** (verified in the built bundle). `plutil -lint` OK; GUI launch eyeball confirms the app still launches cleanly with the keys gone.
 
 ### 5. No App Sandbox / no Hardened Runtime (OPEN, MEDIUM)
 
@@ -138,6 +142,8 @@ full App Sandbox is a non-trivial scoping exercise (file access, the transport, 
 **Recommendation:** enable **Hardened Runtime** first — cheap, and a prerequisite for notarization
 (Phase 7). Treat **App Sandbox** as a separate, larger bite (or an explicit "won't-do for a local
 tool" decision). Document whichever Jason chooses.
+
+**SHIPPED 2026-06-30 — Hardened Runtime only.** `ENABLE_HARDENED_RUNTIME = YES` added to **both** app-target build configs (Debug + Release) in `MacDown.xcodeproj/project.pbxproj`. NOTE: the flag is applied at **code-sign time**, so the Debug test build (`CODE_SIGNING_ALLOWED=NO`) does not exercise it — real verification lands at Phase-7 notarization (sign with `--options runtime`). Headless 67/0 confirms the build is unaffected. **App Sandbox deliberately deferred** — a non-trivial scoping bite (file access for arbitrary docs + the `x-macdown`/CLI transport + temp files); teed up as its own future bite or an explicit won't-do. Reversible: tag `pre-phase4-plist-hardening`.
 
 ### 6. Local transports — input validation (Reviewed, LOW — guarded)
 
@@ -179,8 +185,10 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
 
 - **Mitigated 2026-06-30:** WebView XSS (finding 1) — sanitize + CSP + remote-load block shipped
   (preview eyeball + 67/0). Remaining hardening = WKWebView process-isolation migration (scoped).
-- **Open / medium:** ATS wide-open (3), no sandbox/hardened-runtime (5), unfuzzed C parsers (7),
-  un-swept dependencies (8).
+- **Hardened 2026-06-30 (plist cluster):** ATS now denies arbitrary loads + both dead exception
+  domains removed (3); dangling AppleScript surface (`NSAppleScriptEnabled` + `OSAScriptingDefinition`)
+  removed (4); Hardened Runtime enabled on the app target (5, App Sandbox deferred).
+- **Open / medium:** unfuzzed C parsers (7), un-swept dependencies (8); App Sandbox not adopted (5).
 - **Closed / accepted:** Sparkle gone (2); local transports are allowlist-guarded (6, accepted local
   surface).
 
@@ -195,3 +203,11 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
   `git tag pre-phase4-xss`. WKWebView migration deliberately deferred (scoped, larger). Decision on
   the remote-image tradeoff: block remote subresources by default (anti-beacon) per the threat
   model; a preference toggle to re-enable is teed up if Jason wants remote images in preview.
+- **2026-06-30** — **Plist/hardening cluster (findings 3+4+5) SHIPPED.** (3) `NSAllowsArbitraryLoads`
+  → `false`; both `NSExceptionDomains` (`cdnjs.cloudflare.com` + dead `uranusjr.com`) removed — all
+  preview subresources are bundled and the MathJax CDN URL is rewritten to the bundled copy in
+  `willSendRequest:` before any network load, so no exception is load-bearing. (4) `NSAppleScriptEnabled`
+  + `OSAScriptingDefinition` (→ non-existent `MacDown.sdef`) removed (matches §2 "no scripting";
+  `x-macdown` scheme preserved). (5) `ENABLE_HARDENED_RUNTIME = YES` on both app build configs (App
+  Sandbox deferred). Headless **67/0** + GUI launch/render eyeball (separate `open -n` instance, did NOT
+  disturb a running Debug instance holding Jason's unsaved doc). Reversible: tag `pre-phase4-plist-hardening`.

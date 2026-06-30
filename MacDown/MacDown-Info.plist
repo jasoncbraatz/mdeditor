@@ -99,36 +99,19 @@
 	<string>${MACOSX_DEPLOYMENT_TARGET}</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
+		<!-- Phase 4 finding 3: all preview subresources are bundled (Prism, MathJax) and
+		     remote loads are cancelled in -webView:resource:willSendRequest: (finding 1).
+		     The MathJax CDN URL is rewritten to the bundled copy before any network load,
+		     so no remote egress occurs. Disallow arbitrary loads; no exceptions needed. -->
 		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-		<key>NSExceptionDomains</key>
-		<dict>
-			<key>cdnjs.cloudflare.com</key>
-			<dict>
-				<key>NSExceptionRequiresForwardSecrecy</key>
-				<false/>
-				<key>NSIncludesSubdomains</key>
-				<true/>
-			</dict>
-			<key>uranusjr.com</key>
-			<dict>
-				<key>NSIncludesSubdomains</key>
-				<true/>
-				<key>NSThirdPartyExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-			</dict>
-		</dict>
+		<false/>
 	</dict>
-	<key>NSAppleScriptEnabled</key>
-	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2014–2020 Tzu-ping Chung.</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
-	<key>OSAScriptingDefinition</key>
-	<string>MacDown.sdef</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

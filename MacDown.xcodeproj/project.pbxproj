@@ -1764,6 +1764,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "MacDown/Code/MacDown-Prefix.pch";
+				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "MacDown/MacDown-Info.plist";
 				MACOSX_DEPLOYMENT_TARGET = 10.13;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.jasoncbraatz.${PRODUCT_NAME:rfc1034identifier:lower}-debug";
@@ -1783,6 +1784,7 @@
 				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "MacDown/Code/MacDown-Prefix.pch";
+				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = "MacDown/MacDown-Info.plist";
 				MACOSX_DEPLOYMENT_TARGET = 10.13;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.jasoncbraatz.${PRODUCT_NAME:rfc1034identifier:lower}";

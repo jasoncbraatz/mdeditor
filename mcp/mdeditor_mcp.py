@@ -155,6 +155,11 @@ class NewDocumentInput(BaseModel):
     text: str = Field(description="Markdown text for a new document.")
 
 
+class SetTextInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(description="Markdown text to REPLACE the front document's contents with.")
+
+
 class RunCommandInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     command_id: str = Field(
@@ -229,6 +234,32 @@ async def mdeditor_new_document(params: NewDocumentInput) -> str:
         return _result(reply)
     except Exception as e:
         return _handle_error(e)
+
+
+@mcp.tool(name="mdeditor_set_text", annotations={"title": "Replace front document text", **_WR})
+async def mdeditor_set_text(params: SetTextInput) -> str:
+    """Replace the FRONT mdeditor document's entire markdown with the given text. The text is
+    written to a temp file and passed by path (set-text?file=…), so arbitrarily large documents
+    are safe (no URL limits). Requires a document already open (use open_file/new_document first)."""
+    name = None
+    try:
+        tmpdir = Path(tempfile.gettempdir()) / "mdeditor-mcp"
+        tmpdir.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(suffix=".md", dir=str(tmpdir))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(params.text)
+        # The app reads the file synchronously while handling the event, so it is safe to
+        # remove the temp once _control returns.
+        reply = await _control(_url("set-text", {"file": _file_url(name)}))
+        return _result(reply)
+    except Exception as e:
+        return _handle_error(e)
+    finally:
+        if name:
+            try:
+                os.unlink(name)
+            except OSError:
+                pass
 
 
 @mcp.tool(name="mdeditor_run_command", annotations={"title": "Run an editing command", **_WR})

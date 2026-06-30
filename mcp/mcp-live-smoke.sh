@@ -41,6 +41,8 @@ async def main():
     print("get_text2  :", await M.mdeditor_get_text(M.NoInput()))   # should show the applied ## 
     print("render_html:", await M.mdeditor_render_html(M.NoInput()))
     print("export_html:", await M.mdeditor_export_html(M.ExportHtmlInput(path="/tmp/mcp-live-smoke.html")))
+    print("set_text   :", await M.mdeditor_set_text(M.SetTextInput(text="# Set via MCP\nreplaced.\n")))
+    print("get_text3  :", await M.mdeditor_get_text(M.NoInput()))   # should show the replaced text
     print("new_document:", await M.mdeditor_new_document(M.NewDocumentInput(text="# From MCP\nhi\n")))
 
 asyncio.run(main())

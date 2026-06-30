@@ -17,6 +17,7 @@ inventing a socket/XPC — lowest surgery, fully additive, reversible.
 |---|---|---|
 | `x-macdown://open?url=file:///abs/path.md` | Open a local file (existing behaviour, now input-validated) | `{"ok":true,"verb":"open","path":"…"}` |
 | `x-macdown://command?id=<id>` | Run an editing command on the **front** document | `{"ok":true,"verb":"command","id":"<id>"}` |
+| `x-macdown://set-text?file=file:///abs.md` | Replace the front doc's markdown with a local file's contents (text rides in the FILE, not the URL) | `{"ok":true,"verb":"set-text","textLength":N}` |
 | `x-macdown://get-text` | Return the front document's markdown (`editor.string`) | `{"ok":true,"verb":"get-text","text":"…"}` |
 | `x-macdown://render-html` | Return the front document's rendered HTML (`renderer.currentHtml`) | `{"ok":true,"verb":"render-html","html":"…"}` |
 | `x-macdown://export-html?path=file:///abs.html` | Write the rendered HTML to a validated `.html`/`.htm` path | `{"ok":true,"verb":"export-html","path":"…","bytes":N}` |
@@ -85,9 +86,8 @@ the cross-process hop needs the GUI session.
 
 **MCP server (landed 2026-06-30):** `mcp/mdeditor_mcp.py` (FastMCP, fork-and-own) shells to
 `--control` and exposes `mdeditor_status` / `get_text` / `render_html` / `open_file` /
-`new_document` / `run_command` / `export_html`. Contract tests mock the CLI (13/0); see
-`mcp/README.md` for the `claude_desktop_config.json` block. **Next bite:** register + restart the
-Claude app + in-app smoke; then `set_text` (needs a new `set-text` verb for large input).
+`new_document` / `run_command` / `set_text` / `export_html`. Contract tests mock the CLI (14/0); see
+`mcp/README.md` for the `claude_desktop_config.json` block. **Next bite:** register + restart the Claude app + in-app smoke.
 
 ## Files
 - `MacDown/Code/Application/MPMainController.{h,m}` — verbs (open/command + read-back) + validators + JSON status.

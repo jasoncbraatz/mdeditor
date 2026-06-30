@@ -201,6 +201,35 @@ NS_INLINE void treat()
             extra[@"error"] = err.localizedDescription;
         return [self mp_jsonStatusOK:ok verb:@"command" extra:extra];
     }
+    // ---- set-text: replace the FRONT document's markdown with the contents of a local file.
+    // The new text rides in a temp FILE (file= param), never in the URL, so arbitrarily large
+    // documents are safe (no URL length/encoding limits). The path is the same file:// guard as
+    // `open`; we only ever read it as UTF-8 text and load it into the editor (Phase 4: it's a
+    // local read, no broader reach than the open verb already grants).
+    else if ([verb isEqualToString:@"set-text"])
+    {
+        MPDocument *doc = [self mp_frontDocumentOrNil];
+        if (!doc)
+            return [self mp_jsonStatusOK:NO verb:@"set-text"
+                                   extra:@{@"error": @"no current document"}];
+        NSString *fileParam = [self valueForKey:@"file" fromQueryItems:items];
+        NSURL *src = [[self class] validatedFileURLFromParam:fileParam];
+        if (!src)
+            return [self mp_jsonStatusOK:NO verb:@"set-text"
+                                   extra:@{@"error": @"invalid or missing file "
+                                           @"(need file:// absolute path)"}];
+        NSError *rerr = nil;
+        NSString *text = [NSString stringWithContentsOfURL:src
+                                                  encoding:NSUTF8StringEncoding error:&rerr];
+        if (!text)
+            return [self mp_jsonStatusOK:NO verb:@"set-text"
+                                   extra:@{@"error": (rerr.localizedDescription ?: @"read failed"),
+                                           @"file": src.path}];
+        doc.markdown = text;            // same path the harness uses (editor.string = text)
+        [doc forceRefreshPreview];      // make the preview reflect the new text
+        return [self mp_jsonStatusOK:YES verb:@"set-text"
+                               extra:@{@"textLength": @(text.length)}];
+    }
 
     // ---- Read-back verbs (Phase 3 read-back). These return the front document's state
     // in the JSON reply; the CLI/MCP captures that reply by sending GetURL directly (see

@@ -17,6 +17,7 @@ SSOT for the phase: `docs/MASTER-PLAN.md` §6 · transport contract: `docs/MCP-T
 | `mdeditor_open_file(path)` | `open` | Open a local `.md` file (absolute path). |
 | `mdeditor_new_document(text)` | `open` | Write `text` to a temp `.md` and open it. |
 | `mdeditor_run_command(command_id)` | `command` | Run a registry editing command on the front doc (`strong`, `h1`…`h6`, `ul`, `ol`, …). |
+| `mdeditor_set_text(text)` | `set-text` | Replace the front document's entire markdown (text passed via temp file). |
 | `mdeditor_export_html(path)` | `export-html` | Write the rendered HTML to an absolute `.html`/`.htm` path. |
 
 All inputs are allowlist-validated **server-side** by the app (`+validatedCommandID:` /
@@ -63,6 +64,6 @@ Debug build. `MDEDITOR_TIMEOUT` (seconds, default 20) bounds each call.
 
 ## Status
 
-✅ Server + 7 tools, contract tests (13/0), schema-validated (7 tools list clean).
+✅ Server + 8 tools, contract tests (14/0), schema-validated (8 tools list clean). Live MCP round-trip GREEN (mcp-live-smoke.sh, 2026-06-30).
 ☐ Claude-app registration + live in-app smoke (GUI session / app restart).
-☐ `set_text` tool — needs a new `set-text` transport verb (handle large input off-URL).
+✅ `set_text` (set-text verb carries text via temp file, not the URL).

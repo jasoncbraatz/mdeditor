@@ -115,6 +115,32 @@ class VerbMappingTests(unittest.TestCase):
         os.unlink(d["tempPath"])
 
 
+    def test_set_text_writes_temp_passes_file_and_cleans_up(self):
+        captured = {}
+        def _run(cmd, capture_output=True, text=True, timeout=None):
+            captured["cmd"] = cmd
+            url = [a for a in cmd if a.startswith("x-macdown://")][0]
+            # the file= param must point at a temp .md that exists AT CALL TIME with our text
+            import urllib.parse as up
+            q = up.parse_qs(up.urlparse(url).query)
+            fileurl = q["file"][0]
+            path = up.unquote(up.urlparse(fileurl).path)
+            captured["path"] = path
+            with open(path, encoding="utf-8") as f:
+                captured["content"] = f.read()
+            return types.SimpleNamespace(
+                stdout=json.dumps({"ok": True, "verb": "set-text", "textLength": 5}),
+                stderr="", returncode=0)
+        with mock.patch.object(M.subprocess, "run", _run):
+            out = call(M.mdeditor_set_text(M.SetTextInput(text="# New\n")))
+        url = [a for a in captured["cmd"] if a.startswith("x-macdown://")][0]
+        self.assertTrue(url.startswith("x-macdown://set-text?file=file%3A%2F%2F"))
+        self.assertEqual(captured["content"], "# New\n")
+        self.assertEqual(json.loads(out)["textLength"], 5)
+        # temp file is removed after the call (finally-block cleanup)
+        self.assertFalse(os.path.exists(captured["path"]))
+
+
 class ErrorHandlingTests(unittest.TestCase):
     def test_empty_reply_is_error(self):
         fake = _fake_run("", returncode=1, stderr="no reply from app")

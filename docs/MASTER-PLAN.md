@@ -87,7 +87,7 @@ true rather than aspirational.
 | Document types | Correct already: `CFBundleDocumentTypes` declares `md`/`markdown`, MIME `text/x-markdown`, UTI `net.daringfireball.markdown`, role **Editor**, `NSDocumentClass = MPDocument`. |
 | Scripting | **No** AppleScript/`sdef`/`NSScriptCommand` support today. |
 | CI | **No** GitHub Actions. Legacy `.travis.yml` only. |
-| Updater | Sparkle DISABLED (commit b40195c) but the **pod is still linked** (surface to remove in Phase 4). |
+| Updater | **Sparkle REMOVED** (commit 7627fef, 2026-06-30) — pod dropped, code/nib/plist refs gone; Debug build green, headless 51/0, no framework embedded. (was: disabled b40195c, pod still linked.) |
 | Default-handler | Launch Services is polluted with ~17 registered bundles (old x86 `~/Desktop/downloads/MacDown.app`, DerivedData + `/tmp/ddopt|ddtest` copies, 3 AppTranslocation copies, Warp claiming markdown). This is why "set default" reverts. See Phase 3.5 / done-this-session note. `duti` is installed at `/opt/homebrew/bin/duti`. |
 
 ---
@@ -310,6 +310,8 @@ commands; the MCP shells to those. Phase later to a richer AppleScript `sdef` on
 
 ## 7. PHASE 4 — Security audit & attack-surface reduction
 
+> **PROGRESS 2026-06-30 (co-pilot, Phase 4 kickoff).** Hit-list **item 2 (Sparkle) DONE** — fully removed (commit 7627fef): pod dropped (`pod install`→"Removing Sparkle"), `#import <Sparkle/SUUpdater.h>` + `feedURLStringForUpdater:` deleted, the `SUUpdater` object + "Check for Updates…" menu item removed from `MainMenu.xib`, dead `SUEnableAutomaticChecks` plist key removed. Debug build green, headless **51/0**, no `Sparkle.framework` embedded, GUI launch eyeball (computer-use) confirms full menu bar + item gone. Also **scaffolded `docs/SECURITY-AUDIT.md`** (threat model + 9 findings, decisions log). **Next bite = item 1, WebView XSS** (the #1 risk; recon is in SECURITY-AUDIT §1: legacy JS-enabled `WebView`, `loadHTMLString:` at `MPDocument.m:1170`, unsanitized hoedown HTML, and the existing `willSendRequest:` hook at `MPDocument.m:868` as the remote-load choke point). Findings 3/4/5/7/8/9 are teed up in SECURITY-AUDIT as smaller follow-on bites.
+
 **Goal:** It's ours and auditable. Remove/lock down anything that's an attack surface. Bank a written
 audit. (Was "Priority 2" in the original brief — now a first-class phase.)
 
@@ -333,8 +335,8 @@ audit. (Was "Priority 2" in the original brief — now a first-class phase.)
 7. **Write `docs/SECURITY-AUDIT.md`** — findings, decisions, residual risk. Use the `security-review`
    + `code-review` skills.
 
-**Done when:** ☐ WebView hardened (sanitize+CSP+remote policy) · ☐ Sparkle removed · ☐ parser fuzz
-clean · ☐ analyze clean · ☐ CVE sweep · ☐ hardening review · ☐ `SECURITY-AUDIT.md` banked.
+**Done when:** ☐ WebView hardened (sanitize+CSP+remote policy) · ☑ Sparkle removed (7627fef, 2026-06-30) · ☐ parser fuzz
+clean · ☐ analyze clean · ☐ CVE sweep · ☐ hardening review · ☑ `SECURITY-AUDIT.md` banked (living doc, 9 findings, 2026-06-30).
 
 ---
 
@@ -389,6 +391,9 @@ clean · ☐ analyze clean · ☐ CVE sweep · ☐ hardening review · ☐ `SECU
 - No scripting (`sdef`) today; `x-macdown://` URL scheme + `macdown` CLI are the transport seeds.
 - `Dependency/peg-markdown-highlight/pmh_parser.c` is a GENERATED file (greg ← `pmh_grammar.leg`) now COMMITTED (`12fafb5`) — was gitignored, which broke first-build of a fresh clone (no pre-build phase makes it). Regenerate+recommit if the `.leg` grammar changes (Phase 4/5). Lesson: a warm working copy hides missing generated artifacts — ALWAYS sanity-check a `git clone` build, not just darwin's checkout.
 
+- **CocoaPods over SSH footgun (hard-won 2026-06-30):** `pod install` from a non-UTF-8 ssh session CRASHES with `Encoding::CompatibilityError (Unicode Normalization not appropriate for ASCII-8BIT)` (the ssh login shell lacks a UTF-8 locale). FIX: `export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8` before `pod install` (and before any cocoapods/git-hook invocation over ssh). Builds via `xcodebuild` don't need it.
+- **Removing a pod touches 4 spots (Sparkle, done 2026-06-30):** (1) `Podfile` line, (2) source `#import` + any delegate methods, (3) `MainMenu.xib` — the pod's `customObject` + ANY menu item/action targeting it (a dangling nib class can abort the WHOLE main-nib load = the old "no UI on launch" bug), (4) any leftover `Info.plist` keys. Then `pod install` REGENERATES the pbxproj `[CP] Embed Pods Frameworks` phase + xcconfig automatically — do NOT hand-edit those. Verify: build + 51/0 + `ls <app>/Contents/Frameworks` shows no framework + GUI launch eyeball (nib edits need a real launch check).
+- **MCP zero-input tools (fixed 2026-06-30):** status/get_text/render_html now take `params: Optional[NoInput] = None` so the Claude app no longer errors `Field required` when called with no args (was: required `params: NoInput`). Guard: `ZeroInputErgonomicsTests` asserts the inputSchema doesn't list `params` as required (schema-level, not just signature). Contract tests 15/0.
 ## 10. How to take a bite (every session)
 1. `git pull --ff-only` (this repo + claude-blackbook). Read this file top-to-bottom.
    - Then run `Scripts/ui-verify-due.sh` — if it shouts (counter ≥ 5), the §11.2 human UI pass is mandatory THIS session.
@@ -441,6 +446,7 @@ Between those, headless green is enough — keep dev cheap and flicker-free.
 | 7 | 2026-06-30 | **Phase 3 FastMCP server** `mcp/mdeditor_mcp.py`: 7 tools (status/get_text/render_html/open_file/new_document/run_command/export_html) shelling to `macdown --control`. Contract tests mock the CLI — verb/URL mapping + JSON/error contract, **13/0**; server lists all 7 tools with clean schemas. + `mcp/README.md`, `requirements.txt`, `mcp-live-smoke.sh`. **Live MCP round-trip GREEN** (GUI-session, 2026-06-30): all tools drove the real app (status/get_text/run_command h2/render_html/export_html/new_document). | live MCP: YES; §11.2 full-UI: NO | 2 |
 | 8 | 2026-06-30 | **Phase 3 `set_text`**: new `set-text` transport verb (`MPMainController`) — reads a local file (file= param, validated like `open`) and sets `doc.markdown` + `forceRefreshPreview`; text rides in a temp FILE not the URL. MCP `mdeditor_set_text(text)` writes+passes+deletes the temp (now **8 tools**). MCP contract tests **14/0** (asserts set-text URL + temp content + cleanup). Headless Xcode suite re-run green (51/0). `set_text` no longer deferred. | NO (headless 51/0 + mocked 14/0; live via mcp-live-smoke.sh) | 3 |
 | 9 | 2026-06-30 | **Phase 3 Claude-app wiring (Bite A) — DONE.** Registered `mdeditor` MCP in `claude_desktop_config.json` (env `MDEDITOR_CLI=/Users/jasoncbraatz/bin/macdown` — stable Release CLI, system-frameworks-only, survives DerivedData wipes; `MDEDITOR_BUNDLE=com.jasoncbraatz.mdeditor`), restarted the Claude desktop app, **live in-app round-trip GREEN from a Claude session**: status{ok,commandCount:32} · new_document(ok) · get_text round-trip · render_html `<h1>Hello…</h1>`. Root-caused the smoke's "no reply from app": **stale `/Applications/mdeditor.app` (Jun29, pre-read-back handler)** + **LaunchServices pollution** relaunching old copies — rebuilt app from HEAD, reinstalled to `/Applications`, trashed stale-code copies (`/tmp/ddopt`,`/tmp/ddtest`,backup). Also: **fixed the out-of-order ledger** (was 1,2,3,4,8,7,6,5) and **hardened `ui-verify-due.sh`** to pick max row-# not `tail -1`. **§11.2 full-UI pass DONE this session** (computer-use, fresh **Debug** @ `ec8f004`): launch + **preview renders** ✓; **bold parity** (⌘B → `**boldme**` → preview bold) ✓; H1/H2 + bullet list render ✓; **Export HTML** (9.2 KB — `<h1>/<h2>/<strong>/<ul>/<li>` reflecting the live edits) ✓; **Export PDF** (valid `%PDF-1.3`, 1 page, 16.7 KB) ✓. | live Claude-app MCP smoke: **YES**; §11.2 full-UI: **YES** (computer-use) | 0 |
+| 10 | 2026-06-30 | **Phase 4 kickoff.** (1) MCP `params` ergonomics footgun FIXED — zero-input tools (status/get_text/render_html) now `Optional[NoInput]=None`, so the Claude app no longer needs `params:{}`; added a schema-level regression test (`ZeroInputErgonomicsTests`), contract tests **14→15/0** (commit 36fbae5). (2) **Sparkle REMOVED entirely** (commit 7627fef) — Podfile pod dropped (`pod install`→"Removing Sparkle"), import + `feedURLStringForUpdater:` deleted, `SUUpdater` object + "Check for Updates…" item removed from MainMenu.xib, dead `SUEnableAutomaticChecks` plist key gone; Debug build green, headless **51/0**, no `Sparkle.framework` embedded, **GUI launch eyeball** (computer-use): full menu bar + no "Check for Updates…". (3) `docs/SECURITY-AUDIT.md` scaffolded (threat model + 9 findings; WebView XSS = next bite). | Sparkle launch eyeball: YES; §11.2 full-UI: NO (not due) | 1 |
 
 > Next session: add your row and increment the counter. At **4** (read at session start), do the UI pass, set "UI-verified? = YES", and reset the counter to 0.
 > **Ledger reconciled 2026-06-30 (row 9, Bite A).** The rows had drifted physically out of order (1,2,3,4,**8,7,6,5**) and handoffs #6–#8 had only updated prose notes, so the old `ui-verify-due.sh` `tail -1` read row 5 (counter 0) and **falsely reported "not due"** — a silent force-function failure. Rows are now chronological and the script picks the MAX row-# (hardened). Counter history since the row-5 reset: **row6=1, row7=2, row8=3, row9=4**.

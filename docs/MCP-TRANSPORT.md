@@ -83,8 +83,11 @@ Also note: a bundle-id-targeted event routes via LaunchServices to whatever Debu
 directly. The headless XCTest suite already covers the validators + JSON plumbing (51/0); only
 the cross-process hop needs the GUI session.
 
-**Next bite:** the FastMCP wrapper (`mcp/`, fork-and-own, per §6 step 3) shells to `--control`
-and exposes `open_file` / `run_command` / `get_text` / `render_html` / `export_html` / `status`.
+**MCP server (landed 2026-06-30):** `mcp/mdeditor_mcp.py` (FastMCP, fork-and-own) shells to
+`--control` and exposes `mdeditor_status` / `get_text` / `render_html` / `open_file` /
+`new_document` / `run_command` / `export_html`. Contract tests mock the CLI (13/0); see
+`mcp/README.md` for the `claude_desktop_config.json` block. **Next bite:** register + restart the
+Claude app + in-app smoke; then `set_text` (needs a new `set-text` verb for large input).
 
 ## Files
 - `MacDown/Code/Application/MPMainController.{h,m}` — verbs (open/command + read-back) + validators + JSON status.

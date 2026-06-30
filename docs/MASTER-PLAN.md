@@ -183,7 +183,7 @@ toolbar crash (had a command-dispatch test existed).
    tests (run them before/after).
 
 **Done when:** ☑ command registry (`+invokeCommand:`) · ☑ GUI routes through it · ☑ per-command round-trip tests green ·
-☑ crash-safety sweep green · ☐ GUI parity spot-check (human, see TEST-MATRIX §3).
+☑ crash-safety sweep green · ☑ GUI parity spot-check (human/computer-use, TEST-MATRIX §3 — **done 2026-06-30, ledger row 5**).
 
 > **PHASE 1 ~DONE (commit pending, 2026-06-29).** The command registry now lives in the **app
 > target** on `MPDocument` (`+availableCommandIDs`, `-invokeCommandID:sender:error:`, private
@@ -194,7 +194,7 @@ toolbar crash (had a command-dispatch test existed).
 > it; the old test-only `commandSelectorMap` was removed). `link`/`image` de-duped into one helper.
 > Behavior-preserving: **44/44 green headless** before AND after (`Scripts/test.sh`). Reversible:
 > tag `pre-phase1-gui-route`. The remaining unticked box is the **human GUI parity spot-check**,
-> which is the every-5th-handoff UI pass (see §11) — not due yet (counter at 2). An app-target
+> which is the every-5th-handoff UI pass (see §11) — **DONE 2026-06-30 (ledger row 5): launch/preview, toolbar parity, HTML+PDF export, and the `x-macdown://command?id=h1` live smoke all green via computer-use.** An app-target
 > `MPAutomation` (vs. the registry living on `MPDocument`) was deemed unnecessary surgery: the
 > document IS the natural in-process control surface; Phase 3's MCP can call `invokeCommandID:`
 > directly. Files: `MPDocument.{h,m}`, `MPTestHarness.{h,m}`.
@@ -390,6 +390,7 @@ Between those, headless green is enough — keep dev cheap and flicker-free.
 | 2 | 2026-06-29 | Phase 1 GUI-routing: registry moved to app target on `MPDocument`; all 32 IBActions delegate to it; harness now a façade; link/image de-duped | NO (headless only, 44/44) | 2 |
 | 3 | 2026-06-29 | Phase 2 CI/CD: `.github/workflows/ci.yml` (macos-26 / Xcode 26, **fresh-clone**, Debug+Release matrix, coverage artifact, informational `analyze` job) + `Scripts/pre-push` hook & `install-git-hooks.sh` + retired `.travis.yml`. **CI confirmed GREEN** (run 28405776615 @ `eba20dc`) after fixing a Release-only link gap (`ENABLE_TESTABILITY=YES` + `ONLY_ACTIVE_ARCH=YES` on the test step — Release defaults testability NO). Local suite 44/0. | NO (headless only, 44/44) | 3 |
 | 4 | 2026-06-30 | Phase 3 transport: `x-macdown://command?id=<id>` verb routing to `invokeCommandID:` on the front doc + allowlist validators (`validatedCommandID:`/`validatedFileURLFromParam:`) + `open` file-URL guard + `MPURLCommandTests` (5) + `docs/MCP-TRANSPORT.md`. Suite 49/0. | NO (headless only, 49/0) | 4 |
+| 5 | 2026-06-30 | **UI VERIFICATION PASS** (§11.2 / TEST-MATRIX §3) on a fresh **Debug** build (HEAD `8776396`): launch + **preview renders** ✓; toolbar parity (bold→`**selectme**`, H2→`## …`, ordered-list→`1. …`) ✓; Export **HTML** (9.2 KB, correct `<h1>/<h2>/<strong>/<ol>` reflecting the live edits) ✓; Export **PDF** (valid 1-page `%PDF-1.3`) ✓; **Phase 3 live smoke**: `open -b com.jasoncbraatz.mdeditor-debug "x-macdown://command?id=h1"` applied `# ` to the front-doc line ✓ (verified via **eye/computer-use**, not osascript). Also fixed a `ui-verify-due.sh` off-by-one (see §9 LUT). | **YES** | 0 |
 
 > Next session: add your row and increment the counter. At **5**, do the UI pass, set "UI-verified? = YES", and reset the counter to 0.
-> **At counter = 4 now → UI pass DUE NEXT SESSION (handoff #5). The next session MUST run the §11.2 full UI verification before handing off, and should include the Phase 3 live smoke: open a doc, fire `x-macdown://command?id=h1`, confirm the heading applies. Then set UI-verified? = YES and reset the counter to 0.**
+> **Counter RESET to 0 on 2026-06-30 (handoff #5 = row 5 UI pass; launch/preview, toolbar parity, HTML+PDF export, and the `x-macdown://command?id=h1` live smoke all green). Next mandatory UI pass: when this counter next reads 4 (i.e. the 5th handoff from here), run §11.2 THAT session before handing off.**

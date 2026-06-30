@@ -16,15 +16,23 @@ case "$counter" in
   ''|*[!0-9]*) echo "ui-verify-due: could not parse counter from ledger (last row: $row)"; exit 2;;
 esac
 
+# Cadence: the session that STARTS with counter=4 IS handoff #5 (it does the pass and
+# resets to 0 when it writes its row). So counter==4 means DUE THIS SESSION, not "next".
+# counter>=5 means a prior #5 session skipped the pass -> OVERDUE. (Fixed off-by-one 2026-06-30.)
 if   [ "$counter" -ge 5 ]; then
-  echo "🚨🚨 UI VERIFICATION PASS IS DUE NOW (counter=$counter ≥ 5)."
-  echo "    Run docs/TEST-MATRIX.md §3 against a fresh Debug build BEFORE handing off,"
+  echo "🚨🚨 UI VERIFICATION IS OVERDUE (counter=$counter ≥ 5 — a handoff #5 skipped it)."
+  echo "    Run docs/TEST-MATRIX.md §3 against a fresh Debug build NOW, before handing off,"
   echo "    set the ledger 'UI-verified?' = YES, and reset the counter to 0. (§11.2)"
   exit 1
 elif [ "$counter" -eq 4 ]; then
-  echo "⚠️  UI pass due NEXT session (counter=4 → becomes 5). Plan to run it then. (§11.2)"
+  echo "🚨 UI VERIFICATION PASS IS DUE THIS SESSION (counter=4 → you are handoff #5)."
+  echo "    Run docs/TEST-MATRIX.md §3 against a fresh Debug build BEFORE handing off,"
+  echo "    set the ledger 'UI-verified?' = YES, and reset the counter to 0. (§11.2)"
+  exit 1
+elif [ "$counter" -eq 3 ]; then
+  echo "⚠️  Heads-up: UI pass due NEXT session (counter=3 → next handoff is #5). (§11.2)"
   exit 0
 else
-  echo "✅ UI pass not yet due (counter=$counter; mandatory at 5). (§11.2)"
+  echo "✅ UI pass not yet due (counter=$counter; mandatory when it reaches 4). (§11.2)"
   exit 0
 fi

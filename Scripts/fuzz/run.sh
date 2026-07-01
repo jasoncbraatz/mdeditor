@@ -14,13 +14,15 @@ export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
 # Format: "harness:corpusfile". These are reported but do NOT fail the run until
 # their fix lands. 7b-HEAP (deep_nested_links.md, yySet val-stack heap-overflow) is
 # FIXED & LANDED (2026-06-30): grow-guard in yyPush (pmh_parser.c + greg/compile.c
-# emitter) -- removed from KNOWN_OPEN, so run.sh now FAILS if it ever regresses.
-# The hoedown body path (7a) is FIXED & LANDED (2026-06-30): cap
-# kMPRendererNestingLevel=1000 in MPRenderer.m. The main hoedown loop below runs at the
-# product config (MDFUZZ_NESTING=1000) — deep_blockquote is clean there — so 7a is NOT here.
+# emitter). 7b-STACK (deep_brackets, pmh_markdown_to_elements 512KB overflow) is
+# FIXED & LANDED (2026-07-01): PMH_NESTING_CAP=12 in the pmh entry point.
+# 7c (deep_flow_seq/map.yaml, yaml_parser_load_node LibYAML recursion) is FIXED &
+# LANDED (2026-07-01): MDEDITOR_YAML_MAX_DEPTH=100 depth cap patched into
+# LibYAML loader.c via the Podfile post_install hook (mirrors the CVE-2014-2525
+# pattern). All three fixes are removed from KNOWN_OPEN, so run.sh now FAILS if
+# any of them regresses. The hoedown body path (7a) is FIXED & LANDED
+# (2026-06-30): cap kMPRendererNestingLevel=1000 in MPRenderer.m.
 KNOWN_OPEN=(
-  "yaml_fuzz:deep_flow_seq.yaml"     # 7c stack-overflow yaml_parser_load_node
-  "yaml_fuzz:deep_flow_map.yaml"     # 7c stack-overflow yaml_parser_load_node
 )
 is_known() { local k="$1:$(basename "$2")"; for e in "${KNOWN_OPEN[@]}"; do [ "$e" = "$k" ] && return 0; done; return 1; }
 

@@ -157,7 +157,7 @@ No content is `eval`/`exec`'d. Residual risk (accepted for a single-user local t
 process** can drive the *running* app via the URL scheme / AppleEvent without authentication. This is
 inherent to a local automation surface; documented in `docs/MCP-TRANSPORT.md`.
 
-### 7. C parser fuzzing (PARTIAL — hoedown + pmh-heap FIXED; pmh-stack + LibYAML OPEN)
+### 7. C parser fuzzing (PARTIAL — hoedown + pmh FIXED (heap+stack); LibYAML OPEN)
 
 `hoedown 3.0.7`, the generated `pmh_parser.c`, and LibYAML's scanner/loader parse
 fully attacker-controlled `.md`. First ASan/UBSan fuzz pass done 2026-06-30
@@ -207,7 +207,7 @@ harness). NOTE the residual latent issue for the next session: XCTest's
 symbolication-on-`open()` can wedge under extreme concurrent load — never run the
 heavy fuzz build/`sample` concurrently with `xcodebuild test`.
 
-**7b — pmh_parser (generated): heap-overflow (7b-heap) FIXED & LANDED 2026-06-30; stack-overflow (7b-stack) OPEN.**
+**7b — pmh_parser (generated): heap-overflow (7b-heap) FIXED & LANDED 2026-06-30; stack-overflow (7b-stack) FIXED & LANDED 2026-07-01.**
 `deep_nested_links.md` → **heap-buffer-overflow** in `yySet` (`pmh_parser.c:1258`) — the leg
 value-stack pointer `G->val` was advanced by `yyPush` with **no grow/bounds guard** (unlike
 the thunk stack in `yyDo` or the text buffer in `yyText`), so deep nesting wrote past the
@@ -221,11 +221,40 @@ ASan-clean (rc 0, was rc 134 heap-buffer-overflow); removed from `run.sh` KNOWN_
 gate now FAILS on any regression; full `run.sh` **PASS** (3 known-open, 0 new). Reversible:
 tag `pre-7b`.
 
-**7b-stack — still OPEN.** `deep_brackets.md` → stack-overflow in the peg recursive descent
-(`yy_Label`/`yy_Inline`) — a *separate* unbounded-recursion DoS (not the val-stack; the
-grow-guard does not bound recursion depth). Fix = cap input nesting before
-`pmh_markdown_to_elements` (like 7a) or add a recursion-depth guard. Teed up as the next
-finding-7 bite; lower severity than the heap write (exhaustion/crash, not memory corruption).
+**7b-stack — FIXED & LANDED 2026-07-01 (co-pilot).** `deep_brackets.md` (`[`*40000 …
+`]`*40000) → stack-overflow in the peg recursive-descent cycle
+`yy_Label`→`yy_ExplicitLink`→`yy_Link`→`yy_Inline` (one cycle per nested `[`) — a *separate*
+DoS from 7b-heap (the val-stack grow-guard does not bound recursion **depth**). **Measuring
+the real 512KB `_parseHighlightsQueue` floor (new `Scripts/fuzz/pmh_thread.c`) surfaced a
+worse, previously-unnoted vector: catastrophic EXPONENTIAL-TIME backtracking that dominates
+long before the stack overflow.** Within a single markdown block, parse time **triples per
+added unmatched `[`** (measured -O0: depth 11=0.13 s, 12=0.33 s, 13=1.0 s, 14=3.0 s, 15=8.8 s,
+16=25 s+); the stack overflow only wins at extreme depth (~tens of thousands) when the initial
+descent blows the 512 KB thread before backtracking can. It also triggers on *unbalanced* open
+brackets (`a[b`×20, soft-newline-separated `[`) — any block with enough unmatched `[`. Both are
+a DoS on **opening** a malicious `.md` (highlighting only; background editor thread via
+`HGMarkdownHighlighter -requestParsing`). **Fix (fork-and-own; parser is generated + upstream-
+dead):** `pmh_markdown_to_elements` refuses the parse (returns an empty element array = no
+highlighting for that one file) when any **block's** unmatched-`[` nesting exceeds
+`PMH_NESTING_CAP = 12` — >2× any real document's ≤5, per-block time bounded to ~0.33 s, far
+below the stack floor. The counter resets at blank lines because the blowup is per-block, so
+ordinary docs (even many bracketed links across paragraphs) are never refused. Patched **both**
+the artifact (`pmh_parser.c`) **and** the head source (`pmh_parser_head.c`) so `make`
+reproduces it. **Proof:** `deep_brackets.md` ASan-clean (rc 0, was rc 134); boundary exact
+(depth 12 parses in 0.33 s, 13 refused in 0.03 s); `a[b`×20 + soft-newline variants refused;
+normal 31-input corpus + a real 5-deep nested-link doc parse fine; new `pmh_thread` 512KB
+control (guard-off overflows rc 138, guard-on rc 0) wired into `build.sh`/`run.sh`;
+`deep_brackets` removed from `run.sh` KNOWN_OPEN so the gate now FAILS on regression; full
+`run.sh` **PASS** (2 known-open = 7c only, 0 new); headless **67/0**. Reversible: tag
+`pre-7b-stack`.
+
+**7b-time (SIBLING, OPEN — teed up).** The same exponential-time backtracking also fires on
+non-bracket vectors the `[`-cap does not cover: `corpus/backtick_runs.md` (2 MB of `` ` ``) runs
+>20 s under `pmh_fuzz`. This is a softer DoS than 7b-stack (a hang on a *cancellable* background
+highlight thread, no crash/memory-corruption) and `run.sh` does not flag it (no per-file
+timeout; rc < 128). Fix options for a future bite: a per-block input-size / delimiter-run cap
+generalizing the `[`-cap, or (bundled with finding 9) add a per-file `timeout` to `run.sh` so
+the gate bounds these pathological inputs. Lower priority than 7c.
 
 **7c — LibYAML loader: OPEN.** `deep_flow_seq.yaml` / `deep_flow_map.yaml` (tens of
 thousands of `[` / `{`) → stack-overflow in `yaml_parser_load_node` recursion
@@ -241,10 +270,12 @@ the **unpatched** build aborts with an ASan **heap-buffer-overflow** in
 front-matter path); the **patched** build is clean. So the post_install fix
 demonstrably closes the overflow.
 
-**Residual risk:** the open 7b/7c overflows require pathologically deep nesting
-(tens of thousands of unbalanced delimiters); impact is a **crash/DoS on open**
-of a malicious file (no RCE demonstrated; the 7b-heap `yySet` write warrants the
-fork-and-own fix regardless). Tracked as the next finding-7 bite.
+**Residual risk:** finding 7b is now fully closed (heap + stack). The open items —
+7c (LibYAML loader recursion) and the 7b-time sibling (non-bracket exponential
+backtracking, e.g. backtick runs) — require pathologically deep nesting / huge
+delimiter runs; impact is a **crash-or-hang DoS on open** of a malicious file (no
+RCE demonstrated). 7c is the next finding-7 bite; 7b-time is lower priority (soft,
+cancellable, no crash).
 
 ### 8. Dependency CVE sweep (DONE 2026-06-30, MEDIUM)
 

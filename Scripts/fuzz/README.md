@@ -8,6 +8,7 @@ fully attacker-controlled bytes:
 | `hoedown_harness.c` | hoedown 3.0.7 (`Pods/hoedown/src`) | markdown **body** render (`MPRenderer parseMarkdown:`) |
 | `pmh_harness.c` | peg-markdown-highlight `pmh_parser.c` (generated) | **syntax highlighting** (`HGMarkdownHighlighter`) |
 | `yaml_harness.c` | LibYAML 0.1.4 (`Pods/LibYAML/src`) | **YAML front-matter** (`NSString+Lookup` → `YAMLSerialization`) |
+| `pmh_thread.c` | pmh (on a **512KB pthread**, matching `_parseHighlightsQueue`) | finding 7b-stack floor-finder / cap control |
 
 `hoedown_thread.c` renders on a **512KB pthread stack** (matching the
 `NSOperationQueue` `parseQueue` MacDown actually parses on) to measure the real
@@ -36,12 +37,22 @@ other 31 corpus inputs).
   `kMPRendererNestingLevel` at **1000** (`MPRenderer.m`). Measured overflow floor
   on the 512KB parseQueue stack at -O0 ≈ 2000–3000 → 1000 = 2–3× margin, ~20–30×
   beyond any realistic document. `run.sh` asserts the cap holds every run.
-- **7b — pmh_parser, OPEN.** `deep_brackets.md` → stack-overflow
-  (`yymatchChar`/`yy_Inline` recursion); `deep_nested_links.md` → **heap**-overflow
-  in `yySet` (`pmh_parser.c:1258`) — the leg val-stack (`G->val`) is advanced by
-  `yyPush` with no grow-guard, so deep nesting writes OOB. Fix needs a fork-and-own
-  of the generated parser (grow/bound the val-stack, or cap input nesting before
-  `pmh_markdown_to_elements`). Highlighting only; editor thread.
+- **7b — pmh_parser, FIXED (heap 2026-06-30 + stack 2026-07-01).**
+  `deep_nested_links.md` → **heap**-overflow in `yySet` (`pmh_parser.c:1258`): the leg
+  val-stack (`G->val`) was advanced by `yyPush` with no grow-guard → fixed by growing
+  `G->vals` in `yyPush` (both `pmh_parser.c` + greg emitter `greg/compile.c`).
+  `deep_brackets.md` → the `yy_Label`→`yy_ExplicitLink`→`yy_Link`→`yy_Inline` cycle has
+  BOTH catastrophic **exponential-time backtracking** (parse time triples per added
+  unmatched `[` in one block — depth 12=0.33 s … 16=25 s+, DOMINATES) and, at extreme
+  depth, a **stack overflow** on the 512KB highlighter thread → fixed by an input
+  bracket-nesting cap (`PMH_NESTING_CAP=12`, per-block, resets at blank lines) in
+  `pmh_markdown_to_elements` (both `pmh_parser.c` + `pmh_parser_head.c`). `pmh_thread.c`
+  is the 512KB-stack control (`-DPMH_NO_NESTING_GUARD` = guard-off floor-finder).
+  Highlighting only; background editor thread.
+  - **7b-time (SIBLING, OPEN):** the same exponential backtracking on NON-bracket input —
+    `backtick_runs.md` (2 MB of `` ` ``) hangs >20 s — is not covered by the `[`-cap.
+    Softer (cancellable, no crash). `run.sh` lacks a per-file timeout; fold one in with
+    finding 9.
 - **7c — LibYAML loader, OPEN.** `deep_flow_seq.yaml` / `deep_flow_map.yaml`
   (tens of thousands of `[`/`{`) → stack-overflow in `yaml_parser_load_node`
   recursion (`loader.c`). 0.1.4 has no depth limit. Fix: a depth cap via the

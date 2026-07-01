@@ -19,7 +19,6 @@ export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
 # kMPRendererNestingLevel=1000 in MPRenderer.m. The main hoedown loop below runs at the
 # product config (MDFUZZ_NESTING=1000) — deep_blockquote is clean there — so 7a is NOT here.
 KNOWN_OPEN=(
-  "pmh_fuzz:deep_brackets.md"        # 7b-stack: unbounded peg recursion (yy_Label/yy_Inline) -- OPEN
   "yaml_fuzz:deep_flow_seq.yaml"     # 7c stack-overflow yaml_parser_load_node
   "yaml_fuzz:deep_flow_map.yaml"     # 7c stack-overflow yaml_parser_load_node
 )
@@ -54,6 +53,20 @@ echo "===== pmh_parser (pmh_EXT_NONE) ====="
 for f in "$CORPUS"/*.md; do run pmh_fuzz "$f"; done
 echo "===== LibYAML patched (front-matter path) ====="
 for f in "$CORPUS"/*.yaml; do run yaml_fuzz "$f"; done
+
+echo "===== regression: finding-7b-stack input cap (pmh highlighter, 512KB stack) ====="
+if [ -x "$OUT/pmh_thread_uncapped" ] && [ -x "$OUT/pmh_thread" ]; then
+  # (a) POSITIVE CONTROL: the UNGUARDED pmh parser MUST overflow the 512KB stack on
+  #     deep bracket nesting -- proves the harness genuinely reproduces 7b-stack and
+  #     the input cap is load-bearing (guards against a silent false-green).
+  "$OUT/pmh_thread_uncapped" 40000 >/dev/null 2>&1; rc=$?
+  if [ $rc -ge 128 ]; then echo "  uncapped depth=40000 @512KB: overflows as expected (rc=$rc) -- control OK, the cap is load-bearing";
+  else echo "  uncapped depth=40000 @512KB: did NOT crash (rc=$rc) -- CONTROL BROKEN: harness no longer reproduces 7b-stack!"; newfail=$((newfail+1)); fi
+  # (b) The LANDED input cap MUST make the same input safe (guard refuses the parse before recursing).
+  "$OUT/pmh_thread" 40000 >/dev/null 2>&1; rc=$?
+  if [ $rc -eq 0 ]; then echo "  capped   depth=40000 @512KB: OK (finding-7b-stack cap LANDED in pmh_markdown_to_elements)";
+  else echo "  capped   depth=40000 @512KB: FAILED (rc=$rc) -- the landed cap did NOT prevent the overflow!"; newfail=$((newfail+1)); fi
+fi
 
 echo "===== regression: finding-7a cap on the REAL 512KB parseQueue stack ====="
 if [ -x "$OUT/hoedown_thread" ]; then

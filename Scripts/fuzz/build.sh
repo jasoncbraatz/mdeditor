@@ -22,6 +22,12 @@ echo "[build] pmh_parser (ASan/UBSan)"
 clang "${SAN[@]}" -I"$REPO/Dependency/peg-markdown-highlight" \
   "$HERE/pmh_harness.c" "$REPO/Dependency/peg-markdown-highlight/pmh_parser.c" -o "$OUT/pmh_fuzz"
 
+echo "[build] pmh_parser thread-stack control (plain -O0, 512KB stack; finding 7b-stack)"
+clang -O0 -g -I"$REPO/Dependency/peg-markdown-highlight" \
+  "$HERE/pmh_thread.c" "$REPO/Dependency/peg-markdown-highlight/pmh_parser.c" -o "$OUT/pmh_thread"
+clang -O0 -g -DPMH_NO_NESTING_GUARD -I"$REPO/Dependency/peg-markdown-highlight" \
+  "$HERE/pmh_thread.c" "$REPO/Dependency/peg-markdown-highlight/pmh_parser.c" -o "$OUT/pmh_thread_uncapped"
+
 echo "[build] LibYAML patched (ASan/UBSan)"
 clang "${SAN[@]}" -DHAVE_CONFIG_H \
   -I"$REPO/Pods/LibYAML" -I"$REPO/Pods/LibYAML/include" -I"$REPO/Pods/LibYAML/src" \

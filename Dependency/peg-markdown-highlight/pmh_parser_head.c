@@ -479,9 +479,62 @@ static int strcpy_preformat(char *str, char **out,
 
 
 
+/* --- finding 7b-stack mitigation (mdeditor fork, 2026-07-01) ------------------
+ * The peg-markdown-highlight recursive-descent parser has BOTH catastrophic
+ * exponential-time backtracking AND unbounded C recursion on deeply '['-nested
+ * markdown, both within a single block. Measured (-O0): parse time triples per
+ * added unmatched '[' (depth 11=0.13s, 12=0.33s, 13=1.0s, 14=3.0s, 15=8.8s,
+ * 16=25s+); at extreme depth (tens of thousands) the
+ * yy_Label -> yy_ExplicitLink -> yy_Link -> yy_Inline cycle stack-overflows the
+ * 512KB NSOperationQueue thread the highlighter parses on (HGMarkdownHighlighter
+ * -requestParsing). Either is a DoS on OPENING a malicious .md (highlighting
+ * only, background editor thread). The parser is generated + upstream-dead, so we
+ * fork-and-own: refuse the highlight parse when any block's unmatched-'[' nesting
+ * exceeds a hard cap far above any real document (real markdown link/bracket
+ * nesting is <=5; cap is 12). The counter resets at paragraph breaks (blank
+ * lines) because the blowup is per-block, so ordinary docs -- even ones with many
+ * bracketed links spread across paragraphs -- are never refused. On refusal we
+ * return an empty (all-NULL) element array: no syntax highlighting for that one
+ * pathological document, which is invisible and fully reversible. The control
+ * fuzz build (-DPMH_NO_NESTING_GUARD) disables this to measure the raw floor.
+ * See docs/SECURITY-AUDIT.md finding 7b-stack + Scripts/fuzz/pmh_thread.c.
+ */
+#ifndef PMH_NESTING_CAP
+#define PMH_NESTING_CAP 12
+#endif
+
+static unsigned long pmh_max_block_bracket_depth(const char *text)
+{
+    unsigned long depth = 0, maxd = 0;
+    int line_has_content = 0;
+    const char *c;
+    for (c = text; *c != '\0'; c++) {
+        char ch = *c;
+        if (ch == '\n') {
+            if (!line_has_content) depth = 0;  /* blank line => paragraph break */
+            line_has_content = 0;
+            continue;
+        }
+        if (ch != ' ' && ch != '\t' && ch != '\r') line_has_content = 1;
+        if (ch == '[') { depth++; if (depth > maxd) maxd = depth; }
+        else if (ch == ']') { if (depth > 0) depth--; }
+    }
+    return maxd;
+}
+
 void pmh_markdown_to_elements(char *text, int extensions,
                               pmh_element **out_result[])
 {
+#ifndef PMH_NO_NESTING_GUARD
+    /* finding 7b-stack: refuse (no highlighting) on pathologically bracket-nested
+     * input before it can hang or overflow the 512KB highlighter thread. */
+    if (pmh_max_block_bracket_depth(text) > PMH_NESTING_CAP) {
+        pmh_realelement **empty = (pmh_realelement **)
+            calloc(pmh_NUM_TYPES, sizeof(pmh_realelement *));
+        *out_result = (pmh_element **)empty;
+        return;
+    }
+#endif
     char *text_copy = NULL;
     unsigned long *strip_positions = NULL;
     size_t strip_positions_len = 0;

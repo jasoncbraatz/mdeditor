@@ -36,7 +36,7 @@ Out of scope (single-user local tool): multi-user auth, server hardening, remote
 | 6 | Local transports (`x-macdown://` + CLI) — input validation | LOW | Reviewed (guarded) |
 | 7 | C parsers (hoedown, pmh_parser, LibYAML) not fuzzed under ASan | MEDIUM | IN PROGRESS 2026-07-01 (fuzzed; 5 deep-nesting overflows; **7a hoedown FIXED+LANDED** cap=1000; **7b-heap pmh FIXED+LANDED** (val-stack grow-guard, fork-and-own); **7b-stack pmh FIXED+LANDED** (PMH_NESTING_CAP=12); **7c LibYAML FIXED+LANDED** (MDEDITOR_YAML_MAX_DEPTH=100 in loader.c via Podfile hook) — fuzz run.sh PASS, 0 known-open; only **7b-time sibling** (soft exponential-backtracking, cancellable) remains; CVE-2014-2525 ASan-validated) |
 | 8 | Dependency CVE sweep | MEDIUM | DONE 2026-06-30 (8 pods swept; LibYAML 0.1.4 CVE-2014-2525 patched) |
-| 9 | `xcodebuild analyze` not yet CI-blocking | LOW | OPEN |
+| 9 | Gate hardening (`xcodebuild analyze` CI-blocking; `Scripts/fuzz/run.sh` per-file timeout) | LOW | PARTIAL 2026-07-01 (**per-file `FUZZ_TIMEOUT_S=15s` timeout LANDED** in `run.sh` via `perl -e 'alarm N; exec @ARGV'` — no more indefinite hangs; surfaces 7b-time-class exponential-backtracking as a distinct rc=142 signal; 4 latent 7b-time siblings discovered (`pmh_fuzz:backtick_runs.md/deep_blockquote.md/deep_list.md`, `hoedown_fuzz:deep_list.md`) + `KNOWN_OPEN`'d until per-parser time-budget guards land; **`xcodebuild analyze` CI-blocking still open**) |
 
 ---
 
@@ -324,10 +324,27 @@ of the YAML scanner) is folded into **finding 7** — a heap-overflow guard is b
 sanitizer, not a plain XCTest that may not deterministically crash. The other 7 pods are clean as of
 this sweep; re-run the sweep when any pod version changes.
 
-### 9. `xcodebuild analyze` not yet CI-blocking (OPEN, LOW)
+### 9. Gate hardening (PARTIAL, LOW)
 
-CI runs `analyze` as an **informational** job (`continue-on-error`) pending Phase 4 cleaning the C
-code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4).
+Two sub-items:
+
+**(a) `Scripts/fuzz/run.sh` per-file timeout — LANDED 2026-07-01.** macOS ships no coreutils
+`timeout`, so each harness invocation is wrapped in `perl -e 'alarm N; exec @ARGV'`
+(`FUZZ_TIMEOUT_S=15s` default, override via env, `0` disables). SIGALRM (14) → the child exits
+with `rc=142`, which the existing `rc>=128` path treats as a signal and either fails the gate as
+a NEW DEFECT or accepts via `KNOWN_OPEN` — exactly like the crash-signal path already handles
+7b/7c. Effect: **the gate is now bounded** (no more indefinite hangs on pathological input like
+the 7b-time backtick-runs class) and 7b-time-class DoS is surfaced as a distinct signal. The
+FUZZ_TIMEOUT_S=15s default is comfortably above every non-pathological input in the current
+corpus (all clean in <1 s) and ~10× below any realistic real-world doc's worst case. The
+wrapper immediately **surfaced three latent 7b-time siblings** the pre-timeout gate had been
+silently hiding — `pmh_fuzz:backtick_runs.md/deep_blockquote.md/deep_list.md` and
+`hoedown_fuzz:deep_list.md` — all `KNOWN_OPEN`'d as 7b-time-class until per-parser time-budget
+guards land.
+
+**(b) `xcodebuild analyze` CI-blocking — STILL OPEN.** CI runs `analyze` as an **informational**
+job (`continue-on-error`) pending Phase 4 cleaning the C code. Promote to **blocking** once the
+analyzer is clean (MASTER-PLAN Phase 2/4).
 
 ---
 
@@ -349,9 +366,14 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
   (mirrors the CVE pattern). `run.sh` PASS with **0 known-open, 0 new defects**; two positive
   controls (7a SIZE_MAX @512KB and 7b-stack uncapped @512KB) still overflow as expected,
   proving the caps are load-bearing. CVE-2014-2525 fix independently ASan-validated.
-- **Open / medium:** App Sandbox not adopted (5); **7b-time** sibling — non-bracket exponential-
-  backtracking (e.g. `backtick_runs.md` hangs >20 s in the pmh highlighter); soft, cancellable,
-  no crash — bundled with finding 9's per-file `timeout` in `run.sh`.
+- **Gate bounded 2026-07-01 (9a):** `Scripts/fuzz/run.sh` now applies a per-file `FUZZ_TIMEOUT_S=15s`
+  timeout (`perl alarm` wrapper — macOS has no coreutils `timeout`). No more indefinite gate hangs;
+  7b-time-class DoS surfaces as a distinct rc=142 signal. Discovered 3 additional latent 7b-time
+  siblings (see 7b-time below) that were pre-timeout-hidden.
+- **Open / medium:** App Sandbox not adopted (5); **7b-time** sibling class — non-bracket
+  exponential-backtracking (`pmh_fuzz:backtick_runs.md/deep_blockquote.md/deep_list.md` +
+  `hoedown_fuzz:deep_list.md`); soft, cancellable, no crash; `KNOWN_OPEN`'d in `run.sh` pending a
+  per-parser time-budget guard. `xcodebuild analyze` still informational (9b).
 - **Closed / accepted:** Sparkle gone (2); local transports are allowlist-guarded (6, accepted local
   surface).
 

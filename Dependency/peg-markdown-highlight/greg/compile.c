@@ -583,7 +583,16 @@ YY_LOCAL(int) yyAccept(GREG *G, int tp0)\n\
   return 1;\n\
 }\n\
 \n\
-YY_LOCAL(void) yyPush(GREG *G, char *text, int count, yythunk *thunk, YY_XTYPE YY_XVAR) { G->val += count; }\n\
+YY_LOCAL(void) yyPush(GREG *G, char *text, int count, yythunk *thunk, YY_XTYPE YY_XVAR) {\n\
+  /* MacDown security patch: grow the value-stack (SECURITY-AUDIT finding 7b). */\n\
+  G->val += count;\n\
+  while (G->valslen <= G->val - G->vals) {\n\
+    long yyoff = G->val - G->vals;\n\
+    G->valslen *= 2;\n\
+    G->vals = (YYSTYPE *)YY_REALLOC(G->vals, sizeof(YYSTYPE) * G->valslen, G->data);\n\
+    G->val = G->vals + yyoff;\n\
+  }\n\
+}\n\
 YY_LOCAL(void) yyPop(GREG *G, char *text, int count, yythunk *thunk, YY_XTYPE YY_XVAR)  { G->val -= count; }\n\
 YY_LOCAL(void) yySet(GREG *G, char *text, int count, yythunk *thunk, YY_XTYPE YY_XVAR)  { G->val[count]= G->ss; }\n\
 \n\

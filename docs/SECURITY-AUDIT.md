@@ -34,7 +34,7 @@ Out of scope (single-user local tool): multi-user auth, server hardening, remote
 | 4 | AppleScript enabled (`NSAppleScriptEnabled`) + **dangling** `OSAScriptingDefinition` | LOW/INFO | DONE 2026-06-30 (both keys removed) |
 | 5 | No App Sandbox, no Hardened Runtime (no entitlements file) | MEDIUM | PARTIAL 2026-06-30 (Hardened Runtime ON; App Sandbox deferred) |
 | 6 | Local transports (`x-macdown://` + CLI) — input validation | LOW | Reviewed (guarded) |
-| 7 | C parsers (hoedown, pmh_parser, LibYAML) not fuzzed under ASan | MEDIUM | IN PROGRESS 2026-06-30 (fuzzed; 5 deep-nesting overflows; **7a hoedown FIXED+LANDED** cap=1000 + render-wait de-flake — headless 67/0 ×7 + fuzz run.sh PASS; pmh(7b)+LibYAML(7c) OPEN; CVE-2014-2525 ASan-validated) |
+| 7 | C parsers (hoedown, pmh_parser, LibYAML) not fuzzed under ASan | MEDIUM | IN PROGRESS 2026-06-30 (fuzzed; 5 deep-nesting overflows; **7a hoedown FIXED+LANDED** cap=1000; **7b-heap pmh FIXED+LANDED** (val-stack grow-guard, fork-and-own) — fuzz run.sh PASS; **7b-stack pmh + 7c LibYAML OPEN**; CVE-2014-2525 ASan-validated) |
 | 8 | Dependency CVE sweep | MEDIUM | DONE 2026-06-30 (8 pods swept; LibYAML 0.1.4 CVE-2014-2525 patched) |
 | 9 | `xcodebuild analyze` not yet CI-blocking | LOW | OPEN |
 
@@ -157,7 +157,7 @@ No content is `eval`/`exec`'d. Residual risk (accepted for a single-user local t
 process** can drive the *running* app via the URL scheme / AppleEvent without authentication. This is
 inherent to a local automation surface; documented in `docs/MCP-TRANSPORT.md`.
 
-### 7. C parser fuzzing (PARTIAL — hoedown FIXED; pmh + LibYAML OPEN)
+### 7. C parser fuzzing (PARTIAL — hoedown + pmh-heap FIXED; pmh-stack + LibYAML OPEN)
 
 `hoedown 3.0.7`, the generated `pmh_parser.c`, and LibYAML's scanner/loader parse
 fully attacker-controlled `.md`. First ASan/UBSan fuzz pass done 2026-06-30
@@ -207,15 +207,25 @@ harness). NOTE the residual latent issue for the next session: XCTest's
 symbolication-on-`open()` can wedge under extreme concurrent load — never run the
 heavy fuzz build/`sample` concurrently with `xcodebuild test`.
 
-**7b — pmh_parser (generated): OPEN.** `deep_brackets.md` → stack-overflow in the
-peg recursive descent (`yymatchChar`/`yy_Inline`); `deep_nested_links.md` →
-**heap-buffer-overflow** in `yySet` (`pmh_parser.c:1258`) — the leg value-stack
-pointer `G->val` is advanced by `yyPush` with **no grow/bounds guard**, so deep
-nesting writes past the `vals` allocation. Reachable via `HGMarkdownHighlighter`
-(syntax highlighting, editor thread). Fix needs a **fork-and-own** of the generated
-parser: grow/bound the val-stack (mirror how the thunk stack grows), or cap input
-nesting before `pmh_markdown_to_elements`. The heap overflow (7b-heap) is the
-higher-priority of the two (memory corruption, not just exhaustion).
+**7b — pmh_parser (generated): heap-overflow (7b-heap) FIXED & LANDED 2026-06-30; stack-overflow (7b-stack) OPEN.**
+`deep_nested_links.md` → **heap-buffer-overflow** in `yySet` (`pmh_parser.c:1258`) — the leg
+value-stack pointer `G->val` was advanced by `yyPush` with **no grow/bounds guard** (unlike
+the thunk stack in `yyDo` or the text buffer in `yyText`), so deep nesting wrote past the
+`vals` allocation. Reachable via `HGMarkdownHighlighter` (syntax highlighting, editor thread).
+**Fix (LANDED):** fork-and-own the generated parser — grow `G->vals` on demand in `yyPush`,
+preserving the offset across `realloc` (mirrors `yyDo`'s thunk-stack growth; this is exactly
+Ian Piumarta's later upstream peg/leg guard, which the vendored copy predated). Applied to
+**both** the compiled artifact (`pmh_parser.c`) **and** the greg emitter template
+(`greg/compile.c`) so `make`-regeneration reproduces it. **Proof:** `deep_nested_links.md`
+ASan-clean (rc 0, was rc 134 heap-buffer-overflow); removed from `run.sh` KNOWN_OPEN so the
+gate now FAILS on any regression; full `run.sh` **PASS** (3 known-open, 0 new). Reversible:
+tag `pre-7b`.
+
+**7b-stack — still OPEN.** `deep_brackets.md` → stack-overflow in the peg recursive descent
+(`yy_Label`/`yy_Inline`) — a *separate* unbounded-recursion DoS (not the val-stack; the
+grow-guard does not bound recursion depth). Fix = cap input nesting before
+`pmh_markdown_to_elements` (like 7a) or add a recursion-depth guard. Teed up as the next
+finding-7 bite; lower severity than the heap write (exhaustion/crash, not memory corruption).
 
 **7c — LibYAML loader: OPEN.** `deep_flow_seq.yaml` / `deep_flow_map.yaml` (tens of
 thousands of `[` / `{`) → stack-overflow in `yaml_parser_load_node` recursion
@@ -287,9 +297,10 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
   5 deep-nesting overflows found (all same class). **7a hoedown** body stack-overflow:
   **FIXED & LANDED** — cap `kMPRendererNestingLevel`=1000 + a render-wait de-flake so
   the headless gate stays green (7/7 clean runs; fuzz `run.sh` PASS with a positive
-  control). **7b pmh** stack+**heap** overflow (generated parser) and **7c LibYAML**
-  loader stack-overflow remain OPEN. CVE-2014-2525 fix independently ASan-validated.
-- **Open / medium:** App Sandbox not adopted (5); parser deep-nesting overflows (**7b** pmh + **7c** LibYAML; **7a** hoedown LANDED).
+  control). **7b-heap pmh** val-stack overflow is FIXED+LANDED (grow-guard, fork-and-own).
+  **7b-stack pmh** recursive-descent overflow + **7c LibYAML** loader stack-overflow remain
+  OPEN. CVE-2014-2525 fix independently ASan-validated.
+- **Open / medium:** App Sandbox not adopted (5); parser deep-nesting overflows (**7b-stack** pmh + **7c** LibYAML; **7a** hoedown + **7b-heap** pmh LANDED).
 - **Closed / accepted:** Sparkle gone (2); local transports are allowlist-guarded (6, accepted local
   surface).
 
@@ -322,8 +333,8 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
   + adversarial corpus (repo-backed `Scripts/fuzz/`; standalone clang, no app build).
   Found **5 defects, all the deep-nesting/unbounded-recursion class**: 7a hoedown
   `parse_block` stack-overflow (SIZE_MAX defeats hoedown's `max_nesting` guard; the
-  parse runs on the 512KB `parseQueue` stack); 7b pmh `yymatchChar` stack-overflow +
-  `yySet` **heap**-overflow (leg val-stack, no grow-guard); 7c LibYAML
+  parse runs on the 512KB `parseQueue` stack); 7b pmh `yy_Label` stack-overflow (OPEN) +
+  `yySet` **heap**-overflow (leg val-stack — FIXED 2026-06-30, grow-guard); 7c LibYAML
   `yaml_parser_load_node` stack-overflow. **Independently ASan-validated the
   CVE-2014-2525 fix** (`build.sh --cve-control`: unpatched heap-overflows on the PoC,
   patched clean). **7a fix = cap `kMPRendererNestingLevel` at 1000** — proven
@@ -345,4 +356,9 @@ code. Promote to **blocking** once the analyzer is clean (MASTER-PLAN Phase 2/4)
   cap (`MDFUZZ_NESTING=1000`), `deep_blockquote` removed from KNOWN_OPEN, + a
   positive control asserting unguarded SIZE_MAX still overflows the 512KB stack.
   run.sh **PASS** (4 known-open = 7b×2/7c×2, 0 new). Reversible: tags
-  `pre-7a-deflake`, `pre-7a-land`. Next: 7b pmh fork-and-own, 7c LibYAML depth cap.
+  `pre-7a-deflake`, `pre-7a-land`.
+- **7b-heap pmh val-stack overflow — FIXED & LANDED 2026-06-30 (co-pilot).** Fork-and-own
+  grow-guard in `yyPush` (patched in **both** `pmh_parser.c` and the greg emitter
+  `greg/compile.c`); `deep_nested_links.md` ASan-clean (rc 0, was 134); removed from
+  KNOWN_OPEN; run.sh **PASS** (3 known-open = 7b-stack + 7c×2, 0 new). Reversible: tag
+  `pre-7b`. Next: 7b-stack pmh recursion cap, 7c LibYAML depth cap.

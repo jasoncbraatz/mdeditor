@@ -1253,7 +1253,23 @@ YY_LOCAL(int) yyAccept(GREG *G, int tp0)
   return 1;
 }
 
-YY_LOCAL(void) yyPush(GREG *G, char *text, int count, yythunk *thunk, YY_XTYPE YY_XVAR) { G->val += count; }
+YY_LOCAL(void) yyPush(GREG *G, char *text, int count, yythunk *thunk, YY_XTYPE YY_XVAR) {
+  /* MacDown security patch (SECURITY-AUDIT finding 7b, 2026-06-30): upstream greg
+   * advanced the value-stack pointer G->val by `count` with NO grow/bounds guard
+   * (unlike yyDo's thunk stack / yyText's text buffer), so pathologically deep
+   * nesting walked G->val past the G->vals allocation and yySet (below) wrote out
+   * of bounds -- ASan heap-buffer-overflow reachable via a malicious .md through
+   * HGMarkdownHighlighter. Grow G->vals on demand, preserving the current offset
+   * across realloc (mirrors yyDo's thunk-stack growth; matches Ian Piumarta's
+   * later upstream peg/leg guard). Regeneration-safe twin in greg/compile.c. */
+  G->val += count;
+  while (G->valslen <= G->val - G->vals) {
+    long yyoff = G->val - G->vals;
+    G->valslen *= 2;
+    G->vals = (YYSTYPE *)YY_REALLOC(G->vals, sizeof(YYSTYPE) * G->valslen, G->data);
+    G->val = G->vals + yyoff;
+  }
+}
 YY_LOCAL(void) yyPop(GREG *G, char *text, int count, yythunk *thunk, YY_XTYPE YY_XVAR)  { G->val -= count; }
 YY_LOCAL(void) yySet(GREG *G, char *text, int count, yythunk *thunk, YY_XTYPE YY_XVAR)  { G->val[count]= G->ss; }
 

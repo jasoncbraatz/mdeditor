@@ -12,12 +12,14 @@ export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
 
 # Known-OPEN recursion-depth defects in vendored/generated parsers (finding 7b/7c).
 # Format: "harness:corpusfile". These are reported but do NOT fail the run until
-# their fix lands. The hoedown body path (7a) is FIXED & LANDED (2026-06-30): cap
+# their fix lands. 7b-HEAP (deep_nested_links.md, yySet val-stack heap-overflow) is
+# FIXED & LANDED (2026-06-30): grow-guard in yyPush (pmh_parser.c + greg/compile.c
+# emitter) -- removed from KNOWN_OPEN, so run.sh now FAILS if it ever regresses.
+# The hoedown body path (7a) is FIXED & LANDED (2026-06-30): cap
 # kMPRendererNestingLevel=1000 in MPRenderer.m. The main hoedown loop below runs at the
 # product config (MDFUZZ_NESTING=1000) — deep_blockquote is clean there — so 7a is NOT here.
 KNOWN_OPEN=(
-  "pmh_fuzz:deep_brackets.md"        # 7b stack-overflow yymatchChar
-  "pmh_fuzz:deep_nested_links.md"    # 7b heap-overflow yySet (val-stack)
+  "pmh_fuzz:deep_brackets.md"        # 7b-stack: unbounded peg recursion (yy_Label/yy_Inline) -- OPEN
   "yaml_fuzz:deep_flow_seq.yaml"     # 7c stack-overflow yaml_parser_load_node
   "yaml_fuzz:deep_flow_map.yaml"     # 7c stack-overflow yaml_parser_load_node
 )
